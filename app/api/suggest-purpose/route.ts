@@ -1,9 +1,13 @@
+import { requireAuth } from "@/lib/api-auth";
+import { aiLimit, getIP } from "@/lib/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export async function POST(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = aiLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   const { from, to } = await req.json();
   if (!from || !to) return NextResponse.json({ purpose: "" });
 

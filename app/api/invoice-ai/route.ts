@@ -1,3 +1,5 @@
+import { requireAuth } from "@/lib/api-auth";
+import { aiLimit, getIP } from "@/lib/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -27,6 +29,8 @@ RULES:
 Respond ONLY with valid JSON. No markdown, no code fences, no commentary.`;
 
 export async function POST(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = aiLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   const { prompt, draft } = await req.json();
   if (!prompt) return NextResponse.json({ error: "No prompt" }, { status: 400 });
 

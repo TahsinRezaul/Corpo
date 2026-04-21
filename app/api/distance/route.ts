@@ -1,3 +1,5 @@
+import { requireAuth } from "@/lib/api-auth";
+import { mapsLimit, getIP } from "@/lib/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 
 const KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
@@ -119,6 +121,8 @@ async function osrmDistance(
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = mapsLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   const from    = req.nextUrl.searchParams.get("from")     ?? "";
   const to      = req.nextUrl.searchParams.get("to")       ?? "";
   const fromLat = parseFloat(req.nextUrl.searchParams.get("fromLat") ?? "");

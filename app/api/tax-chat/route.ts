@@ -1,9 +1,13 @@
+import { requireAuth } from "@/lib/api-auth";
+import { aiLimit, getIP } from "@/lib/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = aiLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   try {
     const { messages, context } = await req.json();
 

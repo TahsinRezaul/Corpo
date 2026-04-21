@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { requireAuth } from "@/lib/api-auth";
+import { uploadLimit, getIP } from "@/lib/rate-limit";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 async function toBase64Image(buffer: Buffer, mimeType: string, fileName: string): Promise<{ base64: string; mime: string }> {
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
@@ -61,10 +64,13 @@ Rules:
 - Return only the JSON object, nothing else`;
 
 export async function POST(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = uploadLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   try {
     const form   = await req.formData();
     const file   = form.get("file") as File | null;
     if (!file) return NextResponse.json({ error: "No file" }, { status: 400 });
+    if (file.size > MAX_FILE_SIZE) return NextResponse.json({ error: "File too large (max 10 MB)." }, { status: 413 });
 
     const buffer   = Buffer.from(await file.arrayBuffer());
     const { base64, mime } = await toBase64Image(buffer, file.type, file.name);

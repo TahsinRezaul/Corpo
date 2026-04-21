@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { GoogleAuth } from "google-auth-library";
+import { requireAuth } from "@/lib/api-auth";
+import { uploadLimit, getIP } from "@/lib/rate-limit";
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const openai    = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -119,9 +123,12 @@ Respond ONLY with valid JSON. No markdown, no code fences, no extra text.`;
 // ── Route handler ──────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = uploadLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
   if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+  if (file.size > MAX_FILE_SIZE) return NextResponse.json({ error: "File too large (max 10 MB)." }, { status: 413 });
 
   const buffer   = Buffer.from(await file.arrayBuffer());
   const mimeType = file.type || "image/jpeg";

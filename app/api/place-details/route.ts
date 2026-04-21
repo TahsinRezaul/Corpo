@@ -1,8 +1,12 @@
+import { requireAuth } from "@/lib/api-auth";
+import { mapsLimit, getIP } from "@/lib/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 
 const KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
 
 export async function GET(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = mapsLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   const placeId = req.nextUrl.searchParams.get("place_id") ?? "";
   if (!placeId) return NextResponse.json({ error: "Missing place_id" }, { status: 400 });
   if (!KEY)     return NextResponse.json({ error: "No API key" }, { status: 500 });

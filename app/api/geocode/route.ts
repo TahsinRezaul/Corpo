@@ -1,3 +1,5 @@
+import { requireAuth } from "@/lib/api-auth";
+import { mapsLimit, getIP } from "@/lib/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 
 const KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
@@ -48,6 +50,8 @@ function latLngToBounds(lat: number, lng: number, radiusKm: number): string {
 }
 
 export async function GET(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = mapsLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   const raw      = req.nextUrl.searchParams.get("address")  ?? "";
   // New location-bias params (preferred)
   const latStr   = req.nextUrl.searchParams.get("lat");

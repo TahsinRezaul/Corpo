@@ -1,3 +1,5 @@
+import { requireAuth } from "@/lib/api-auth";
+import { mapsLimit, getIP } from "@/lib/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 
 const KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
@@ -77,6 +79,8 @@ async function nominatimAutocomplete(q: string, lat: number, lng: number, radius
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const deny = await requireAuth(); if (deny) return deny;
+  const rl = mapsLimit(getIP(req)); if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded. Try again shortly." }, { status: 429 });
   const q        = req.nextUrl.searchParams.get("q")      ?? "";
   const latStr   = req.nextUrl.searchParams.get("lat");
   const lngStr   = req.nextUrl.searchParams.get("lng");
