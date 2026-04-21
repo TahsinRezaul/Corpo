@@ -677,9 +677,9 @@ export default function MileagePage() {
     setShowForm(false);
 
     // Resolve all distances in parallel immediately (don't wait for useEffect)
-    const kms = await Promise.all(validLegs.map(fetchKm));
+    const distances = await Promise.all(validLegs.map(fetchDistance));
     for (let i = 0; i < ids.length; i++) {
-      updateMileage(ids[i], { km: kms[i], kmPending: false });
+      updateMileage(ids[i], { km: distances[i].km, kmPending: false });
     }
     setTrips(getMileage());
   }
@@ -809,6 +809,7 @@ export default function MileagePage() {
     updates?: { purpose?: string; notes?: string; from?: string; to?: string };
     dateTransform?: { op: string; value: string };
     skipRecalculate?: boolean;
+    match?: Record<string, string>;
     // resolve_label
     label?: string;
     resolvedAddress?: string;
@@ -837,7 +838,7 @@ export default function MileagePage() {
         targetIds = targetIds.filter((id) => {
           const t = trips.find((x) => x.id === id);
           if (!t) return false;
-          return Object.entries(action.match).every(([k, v]) =>
+          return Object.entries(action.match!).every(([k, v]) =>
             (t as Record<string, unknown>)[k]?.toString().toLowerCase() === (v as string).toLowerCase()
           );
         });

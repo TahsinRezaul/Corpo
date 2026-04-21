@@ -396,7 +396,7 @@ async function downloadPDF(inv: Invoice, biz: BusinessProfile) {
 
 async function previewPDF(inv: Invoice, biz: BusinessProfile): Promise<string> {
   const doc = await buildPDF(inv, biz);
-  return doc.output("bloburl") as string;
+  return doc.output("bloburl") as unknown as string;
 }
 
 // ── Status badge (clickable) ──────────────────────────────────────────────────

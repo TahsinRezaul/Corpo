@@ -586,7 +586,7 @@ export default function TaxPage() {
             </div>
 
             <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
-              <NumInput label="Total after-tax corp money available" value={totalEarned} onChange={v => { setTotalEarned(v); setManuallySet(new Set()); }} />
+              <NumInput label="Total after-tax corp money available" value={totalEarned} onChange={v => { setTotalEarned(v); }} />
               <div />
             </div>
 
