@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      target: prod
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persistent volume for user accounts (users.json)
+      - corpo-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - AUTH_SECRET=${AUTH_SECRET}
+      - AUTH_URL=${AUTH_URL}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
+      - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
+      - GOOGLE_DOCUMENTAI_PROCESSOR_ID=${GOOGLE_DOCUMENTAI_PROCESSOR_ID}
+      - GOOGLE_SERVICE_ACCOUNT_KEY=${GOOGLE_SERVICE_ACCOUNT_KEY}
+
+volumes:
+  corpo-data:

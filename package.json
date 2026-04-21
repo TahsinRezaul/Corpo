@@ -1,0 +1,38 @@
+{
+  "name": "tax-filer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev --experimental-https --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
+    "@napi-rs/canvas": "^0.1.97",
+    "google-auth-library": "^10.6.2",
+    "heic-convert": "^2.1.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
+    "next": "^16.2.1",
+    "next-auth": "^5.0.0-beta.31",
+    "openai": "^6.33.0",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^5.6.205",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "sharp": "^0.34.5",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/node": "^25.5.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2"
+  }
+}

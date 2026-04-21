@@ -1,0 +1,22 @@
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      # Persist user accounts across restarts
+      - corpo-data:/app/data
+    env_file:
+      - .env.local
+    environment:
+      - NODE_ENV=development
+
+# ── Production override: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up ──
+# See docker-compose.prod.yml
+
+volumes:
+  corpo-data:

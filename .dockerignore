@@ -1,0 +1,24 @@
+# Dependencies (reinstalled inside image)
+node_modules/
+
+# Build output (rebuilt inside image)
+.next/
+
+# Local env — inject via platform env vars or --env-file at runtime
+.env.local
+.env
+*.env
+
+# Dev-only certs
+certificates/
+
+# Git
+.git/
+.gitignore
+
+# Docs / misc
+*.md
+.DS_Store
+
+# Data is mounted as a volume in production — never bake it into the image
+data/
