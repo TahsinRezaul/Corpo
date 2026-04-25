@@ -1,12 +1,12 @@
 import NextAuth from "next-auth";
-import authConfig from "./auth.config";
-const { auth } = NextAuth(authConfig);
 import { NextResponse } from "next/server";
+import authConfig from "./auth.config";
 
-export default auth(function middleware(req) {
+const { auth } = NextAuth(authConfig);
+
+export default auth(function proxy(req) {
   const { pathname } = req.nextUrl;
 
-  // Allow auth API and static assets through without a session check
   if (
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/_next") ||
@@ -15,7 +15,6 @@ export default auth(function middleware(req) {
     return NextResponse.next();
   }
 
-  // Require NextAuth session for everything else
   if (!req.auth?.user) {
     if (pathname !== "/login") {
       return NextResponse.redirect(new URL("/login", req.url));
