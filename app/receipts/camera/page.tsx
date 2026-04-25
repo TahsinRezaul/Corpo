@@ -163,22 +163,30 @@ export default function CameraPage() {
     return () => clearInterval(id);
   }, [ready, scan]);
 
-  // Native camera fallback — works even without HTTPS getUserMedia permission
+  // Native camera fallback — queues image for background parsing so user can navigate away
   async function handleFallbackFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
       const compressed = await compressImage(file);
-      const formData = new FormData();
-      formData.append("file", compressed);
-      const res = await fetch("/api/parse-receipt", { method: "POST", body: formData });
-      if (!res.ok) throw new Error("Failed to read receipt");
-      const parsed: ParsedReceipt = await res.json();
-      setPending([{ id: crypto.randomUUID(), fileName: file.name, thumbnail: parsed._thumbnail ?? "", parsed }]);
-      router.push("/receipts/review");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to read receipt");
+      const imageData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(compressed);
+      });
+      addToBackgroundQueue({
+        id: crypto.randomUUID(),
+        fileName: file.name,
+        imageData,
+        status: "parsing",
+        capturedAt: new Date().toISOString(),
+      });
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      router.back();
+    } catch {
+      setError("Failed to read file");
     } finally {
       setUploading(false);
     }

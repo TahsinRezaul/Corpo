@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   getBackgroundQueue,
@@ -8,22 +8,16 @@ import {
   removeFromBackgroundQueue,
   getPending,
   setPending,
-  type BackgroundParse,
 } from "@/lib/storage";
-
-type Notification = {
-  id: string;
-  status: "parsing" | "done" | "error";
-  label: string;
-};
+import { useBackgroundTasks } from "@/contexts/BackgroundTasksContext";
 
 export default function BackgroundParser() {
   const router = useRouter();
   const processingRef = useRef<Set<string>>(new Set());
-  const [notifs, setNotifs] = useState<Notification[]>([]);
+  const { notifs, setNotifs } = useBackgroundTasks();
 
   useEffect(() => {
-    // On mount, clear any stale "parsing" items left from a crashed session
+    // Clear stale "parsing" items left from a crashed session
     const stale = getBackgroundQueue().filter((i) => i.status === "parsing");
     stale.forEach((i) => removeFromBackgroundQueue(i.id));
   }, []);
@@ -37,7 +31,6 @@ export default function BackgroundParser() {
         setNotifs((prev) => [...prev.filter((n) => n.id !== item.id), { id: item.id, status: "parsing", label: "Parsing receipt…" }]);
 
         try {
-          // Convert base64 data URL → Blob → File
           const res = await fetch(item.imageData);
           const blob = await res.blob();
           const file = new File([blob], item.fileName, { type: "image/jpeg" });
@@ -48,7 +41,6 @@ export default function BackgroundParser() {
           if (!apiRes.ok) throw new Error("parse failed");
           const parsed = await apiRes.json();
 
-          // Add to pending review queue
           const existing = getPending();
           setPending([...existing, { id: item.id, fileName: item.fileName, thumbnail: parsed._thumbnail ?? "", parsed }]);
 
@@ -56,18 +48,17 @@ export default function BackgroundParser() {
           const label = parsed.vendor && parsed.total ? `${parsed.vendor} · ${parsed.total}` : "Receipt ready";
           setNotifs((prev) => prev.map((n) => n.id === item.id ? { ...n, status: "done", label } : n));
 
-          // Auto-dismiss after 5s
+          // Auto-dismiss toast after 8s — tray keeps showing it until navigated
           setTimeout(() => {
-            setNotifs((prev) => prev.filter((n) => n.id !== item.id));
             removeFromBackgroundQueue(item.id);
-          }, 5000);
+          }, 8000);
         } catch {
           updateBackgroundParse(item.id, { status: "error" });
           setNotifs((prev) => prev.map((n) => n.id === item.id ? { ...n, status: "error", label: "Couldn't read receipt" } : n));
           setTimeout(() => {
             setNotifs((prev) => prev.filter((n) => n.id !== item.id));
             removeFromBackgroundQueue(item.id);
-          }, 6000);
+          }, 8000);
         } finally {
           processingRef.current.delete(item.id);
         }
@@ -77,7 +68,7 @@ export default function BackgroundParser() {
     const interval = setInterval(processQueue, 600);
     processQueue();
     return () => clearInterval(interval);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (notifs.length === 0) return null;
 

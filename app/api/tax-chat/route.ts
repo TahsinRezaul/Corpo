@@ -38,7 +38,7 @@ Never make up numbers — only reference what's in their snapshot above.`;
     const text = response.content[0].type === "text" ? response.content[0].text : "";
     return NextResponse.json({ reply: text });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("Tax chat error:", err instanceof Error ? err.message : String(err));
+    return NextResponse.json({ error: "Failed to process the request. Please try again." }, { status: 500 });
   }
 }

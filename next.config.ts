@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV === "development";
+
 const SECURITY_HEADERS = [
   { key: "X-Content-Type-Options",    value: "nosniff" },
   { key: "X-Frame-Options",           value: "DENY" },
@@ -14,7 +16,10 @@ const SECURITY_HEADERS = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js requires unsafe-eval in dev
+      // unsafe-eval is only needed in development for Next.js hot-reload
+      isDev
+        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+        : "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self'",

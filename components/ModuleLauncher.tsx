@@ -225,10 +225,21 @@ export function loadAll(): { modules: ModuleEntry[]; folders: Folder[]; grid: Gr
   return { modules, folders, grid };
 }
 
+function syncKey(key: string, value: unknown): void {
+  fetch("/api/userdata", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value }),
+  }).catch(() => {});
+}
+
 export function saveAll(modules: ModuleEntry[], folders: Folder[], grid: GridEntry[]): void {
   localStorage.setItem(MODULES_KEY, JSON.stringify(modules));
   localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
   localStorage.setItem(GRID_KEY,    JSON.stringify(grid));
+  syncKey(MODULES_KEY, modules);
+  syncKey(FOLDERS_KEY, folders);
+  syncKey(GRID_KEY, grid);
 }
 
 // Backward-compat export
@@ -493,6 +504,7 @@ export default function ModuleLauncher({
 
   // ── Soon-toast ───────────────────────────────────────────────
   const [soonMsg, setSoonMsg] = useState("");
+  const [search, setSearch] = useState("");
   useEffect(() => {
     if (!soonMsg) return;
     const t = setTimeout(() => setSoonMsg(""), 2800);
@@ -700,43 +712,80 @@ export default function ModuleLauncher({
   const editingMod    = editingTileId ? modules.find(m => m.id === editingTileId) ?? null : null;
   const iconPickerMod = iconPickerForId ? modules.find(m => m.id === iconPickerForId) ?? null : null;
 
+  // ── Search filter ─────────────────────────────────────────────
+  const filteredSections = search.trim()
+    ? ALL_SECTIONS.map(s => ({
+        ...s,
+        items: s.items.filter(i => i.label.toLowerCase().includes(search.toLowerCase())),
+      })).filter(s => s.items.length > 0)
+    : ALL_SECTIONS;
+
   // ── RENDER ────────────────────────────────────────────────────
   return (
     <>
       <div className="fixed inset-0 z-50 flex flex-col" style={{ backgroundColor: "var(--bg-base)" }}>
 
-        {/* ── Header ─────────────────────────────────────────── */}
-        <div className="flex items-center justify-between px-5 flex-shrink-0" style={{ height: 52, backgroundColor: "var(--bg-surface)", borderBottom: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onClose}
-              className="flex items-center justify-center rounded-xl"
-              style={{ width: 34, height: 34, backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              {editMode ? "Edit Modules" : "All Modules"}
-            </span>
-          </div>
-
+        {/* ── Shell header ───────────────────────────────────── */}
+        <div
+          className="flex items-center gap-4 px-5 flex-shrink-0"
+          style={{ height: 56, backgroundColor: "var(--bg-surface)", borderBottom: "1px solid var(--border)" }}
+        >
+          {/* Close */}
           <button
-            onClick={() => { setEditMode(!editMode); setEditingTileId(null); }}
-            className="text-sm font-medium px-4 py-1.5 rounded-lg"
+            onClick={onClose}
+            className="flex items-center justify-center rounded-xl flex-shrink-0"
+            style={{ width: 34, height: 34, backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+            aria-label="Close"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+
+          {/* Search */}
+          {!editMode && (
+            <div className="flex-1 relative">
+              <svg
+                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-secondary)", pointerEvents: "none" }}
+              >
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search apps…"
+                style={{
+                  width: "100%", height: 34, paddingLeft: 32, paddingRight: 10,
+                  borderRadius: 10, border: "1px solid var(--border)",
+                  backgroundColor: "var(--bg-elevated)", color: "var(--text-primary)",
+                  fontSize: 13, outline: "none", boxSizing: "border-box",
+                }}
+              />
+            </div>
+          )}
+          {editMode && (
+            <span className="flex-1 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+              Manage Apps
+            </span>
+          )}
+
+          {/* Edit / Done */}
+          <button
+            onClick={() => { setEditMode(!editMode); setEditingTileId(null); setSearch(""); }}
+            className="text-sm font-medium px-4 py-1.5 rounded-lg flex-shrink-0"
             style={{
               color: editMode ? "var(--accent-blue)" : "var(--text-secondary)",
               backgroundColor: editMode ? "rgba(59,130,246,0.12)" : "var(--bg-elevated)",
               border: `1px solid ${editMode ? "rgba(59,130,246,0.3)" : "var(--border)"}`,
             }}
           >
-            {editMode ? "Done" : "Edit"}
+            {editMode ? "Done" : "Manage"}
           </button>
         </div>
 
         {/* ── Body ────────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto flex flex-col">
+        <div className="flex-1 overflow-y-auto">
           {openFolder ? (
-            /* ── Folder view ── */
             <FolderView
               folder={openFolder}
               modules={modules}
@@ -747,111 +796,144 @@ export default function ModuleLauncher({
               onNavigate={href => { router.push(href); onClose(); }}
             />
           ) : !editMode ? (
-            /* ── Categorized browse view ── */
-            <div className="flex-1 overflow-y-auto">
-              <div className="p-5 flex flex-col gap-7">
-                {ALL_SECTIONS.map(section => (
-                  <div key={section.id}>
-                    {/* Section header */}
-                    <div className="flex items-start justify-between mb-3 pb-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
-                      <div>
-                        <h3 style={{ color: "var(--text-primary)", fontSize: 13, fontWeight: 600, letterSpacing: "-0.015em", margin: 0 }}>
-                          {section.label}
-                        </h3>
-                        {section.desc && (
-                          <p style={{ color: "var(--text-secondary)", fontSize: 11, marginTop: 2, margin: 0 }}>
-                            {section.desc}
-                          </p>
-                        )}
-                      </div>
-                      {section.accent && (
-                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, backgroundColor: "rgba(16,185,129,0.15)", color: "#10b981", border: "1px solid rgba(16,185,129,0.25)", whiteSpace: "nowrap", flexShrink: 0, marginLeft: 8, marginTop: 2 }}>
-                          Accountant
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Tiles */}
-                    <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-                      {section.items.map(item => {
-                        const isSoon = item.badge === "soon";
-                        const isDownload = item.badge === "download";
-                        const builtIn = modules.find(m => m.id === item.id);
-                        const href = item.href ?? (item.id.startsWith("/") ? item.id : undefined);
-                        const activePath = href?.split("?")[0];
-                        const active = activePath ? (path === activePath || path.startsWith(activePath + "/")) : false;
-
-                        return (
-                          <button
-                            key={item.id}
-                            disabled={isSoon}
-                            onClick={() => {
-                              if (isSoon) { setSoonMsg(`${item.label} is coming in a future update.`); return; }
-                              if (href) { router.push(href); onClose(); }
-                            }}
-                            className="relative flex flex-col items-center justify-center gap-1.5 rounded-xl"
-                            style={{
-                              height: 82,
-                              opacity: isSoon ? 0.42 : 1,
-                              cursor: isSoon ? "not-allowed" : "pointer",
-                              backgroundColor: active
-                                ? "rgba(59,130,246,0.1)"
-                                : (section.accent && !isSoon ? "rgba(16,185,129,0.04)" : "var(--bg-surface)"),
-                              border: `1.5px solid ${active
-                                ? "var(--accent-blue)"
-                                : (section.accent && !isSoon ? "rgba(16,185,129,0.18)" : "var(--border)")}`,
-                              color: active ? "var(--accent-blue)" : "var(--text-secondary)",
-                              transition: "background-color 0.15s, border-color 0.15s",
-                            }}
-                            onMouseEnter={e => { if (!isSoon && !active) (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-elevated)"; }}
-                            onMouseLeave={e => { if (!isSoon && !active) (e.currentTarget as HTMLElement).style.backgroundColor = section.accent ? "rgba(16,185,129,0.04)" : "var(--bg-surface)"; }}
-                          >
-                            {builtIn ? (
-                              <TileIcon mod={builtIn} size={22} />
-                            ) : item.emoji ? (
-                              <span style={{ fontSize: 20, lineHeight: 1 }}>{item.emoji}</span>
-                            ) : (
-                              <span style={{ fontSize: 20 }}>📦</span>
-                            )}
-                            <span style={{ fontSize: 10.5, fontWeight: 500, lineHeight: 1.3, textAlign: "center", maxWidth: "90%", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden" }}>
-                              {item.label}
-                            </span>
-
-                            {isSoon && (
-                              <span style={{ position: "absolute", top: 4, right: 4, fontSize: 9, fontWeight: 600, padding: "1px 5px", borderRadius: 999, backgroundColor: "rgba(100,100,100,0.4)", color: "rgba(255,255,255,0.65)" }}>
-                                Soon
-                              </span>
-                            )}
-                            {isDownload && (
-                              <span style={{ position: "absolute", top: 5, right: 5, color: "#10b981" }}>
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            /* ── Edit grid (manage mode) ── */
-            <div className="flex-1 p-5">
-              {editMode && (
-                <p className="text-xs mb-4 text-center" style={{ color: "var(--text-secondary)" }}>
-                  Drag to reorder · hold over a tile to create a folder · tap tile to rename / change icon
+            /* ── Fiori browse view ── */
+            <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 20px 40px" }}>
+              {filteredSections.length === 0 && (
+                <p style={{ textAlign: "center", color: "var(--text-secondary)", fontSize: 13, marginTop: 48 }}>
+                  No apps match &ldquo;{search}&rdquo;
                 </p>
               )}
+              {filteredSections.map(section => (
+                <div key={section.id} style={{ marginBottom: 32 }}>
+                  {/* Group header — Fiori style */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase",
+                      color: section.accent ? "#10b981" : "var(--text-secondary)",
+                      whiteSpace: "nowrap",
+                    }}>
+                      {section.label}
+                    </span>
+                    <div style={{ flex: 1, height: 1, backgroundColor: "var(--border)" }} />
+                    {section.accent && (
+                      <span style={{
+                        fontSize: 10, padding: "2px 8px", borderRadius: 999,
+                        backgroundColor: "rgba(16,185,129,0.12)", color: "#10b981",
+                        border: "1px solid rgba(16,185,129,0.25)", whiteSpace: "nowrap",
+                      }}>
+                        Accountant
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Tile grid */}
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(108px, 1fr))",
+                    gap: 10,
+                  }}>
+                    {section.items.map(item => {
+                      const isSoon     = item.badge === "soon";
+                      const isDownload = item.badge === "download";
+                      const builtIn    = modules.find(m => m.id === item.id);
+                      const href       = item.href ?? (item.id.startsWith("/") ? item.id : undefined);
+                      const activePath = href?.split("?")[0];
+                      const active     = activePath ? (path === activePath || path.startsWith(activePath + "/")) : false;
+
+                      return (
+                        <button
+                          key={item.id}
+                          disabled={isSoon}
+                          onClick={() => {
+                            if (isSoon) { setSoonMsg(`${item.label} is coming soon.`); return; }
+                            if (href) { router.push(href); onClose(); }
+                          }}
+                          style={{
+                            position: "relative",
+                            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                            gap: 8, padding: "14px 8px 12px",
+                            borderRadius: 12,
+                            height: 100,
+                            opacity: isSoon ? 0.38 : 1,
+                            cursor: isSoon ? "not-allowed" : "pointer",
+                            backgroundColor: active ? "rgba(59,130,246,0.1)" : "var(--bg-surface)",
+                            border: `1.5px solid ${active ? "var(--accent-blue)" : "var(--border)"}`,
+                            color: active ? "var(--accent-blue)" : "var(--text-secondary)",
+                            transition: "background-color 0.12s, border-color 0.12s, box-shadow 0.12s",
+                            boxShadow: active ? "0 0 0 1px rgba(59,130,246,0.2)" : "none",
+                          }}
+                          onMouseEnter={e => {
+                            if (!isSoon && !active) {
+                              (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-elevated)";
+                              (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.12)";
+                            }
+                          }}
+                          onMouseLeave={e => {
+                            if (!isSoon && !active) {
+                              (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-surface)";
+                              (e.currentTarget as HTMLElement).style.borderColor = "var(--border)";
+                            }
+                          }}
+                        >
+                          {/* Icon */}
+                          <div style={{ flexShrink: 0 }}>
+                            {builtIn ? (
+                              <TileIcon mod={builtIn} size={24} />
+                            ) : item.emoji ? (
+                              <span style={{ fontSize: 22, lineHeight: 1 }}>{item.emoji}</span>
+                            ) : (
+                              <span style={{ fontSize: 22 }}>📦</span>
+                            )}
+                          </div>
+
+                          {/* Label */}
+                          <span style={{
+                            fontSize: 11, fontWeight: 500, lineHeight: 1.3,
+                            textAlign: "center", maxWidth: "100%",
+                            display: "-webkit-box", WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical" as const, overflow: "hidden",
+                            color: "inherit",
+                          }}>
+                            {item.label}
+                          </span>
+
+                          {/* Badges */}
+                          {isSoon && (
+                            <span style={{
+                              position: "absolute", top: 4, right: 5,
+                              fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 999,
+                              backgroundColor: "rgba(100,100,120,0.5)", color: "rgba(255,255,255,0.6)",
+                              letterSpacing: "0.03em",
+                            }}>
+                              SOON
+                            </span>
+                          )}
+                          {isDownload && (
+                            <span style={{ position: "absolute", top: 5, right: 6, color: "#10b981" }}>
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* ── Manage / edit grid ── */
+            <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 20px 40px" }}>
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", textAlign: "center", marginBottom: 20 }}>
+                Drag to reorder · hold over a tile to merge into a folder · tap a tile to rename or change its icon
+              </p>
 
               <div
-                className="flex flex-wrap gap-3 mx-auto justify-center"
-                style={{ maxWidth: 800 }}
+                style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-start" }}
                 onDragOver={e => e.preventDefault()}
               >
                 {grid.map((item, idx) => {
-                  const isDragging  = draggingIdx === idx;
-                  const isMergeTgt  = mergeTargetIdx === idx;
+                  const isDragging = draggingIdx === idx;
+                  const isMergeTgt = mergeTargetIdx === idx;
 
                   if (item.type === "module") {
                     const mod = modules.find(m => m.id === item.id);
@@ -861,52 +943,45 @@ export default function ModuleLauncher({
                     return (
                       <div
                         key={item.id}
-                        className="relative flex-shrink-0"
                         style={{
-                          width: 130,
-                          animation: editMode
-                            ? `jiggle 0.18s ${(idx * 73) % 350}ms ease-in-out infinite ${idx % 2 === 0 ? "alternate" : "alternate-reverse"}`
-                            : "none",
-                          opacity: isDragging ? 0.35 : 1,
-                          transition: "opacity 0.12s",
-                          cursor: editMode ? "grab" : "auto",
+                          position: "relative", flexShrink: 0, width: 108,
+                          animation: `jiggle 0.18s ${(idx * 73) % 350}ms ease-in-out infinite ${idx % 2 === 0 ? "alternate" : "alternate-reverse"}`,
+                          opacity: isDragging ? 0.3 : 1, transition: "opacity 0.12s", cursor: "grab",
                         }}
-                        draggable={editMode}
-                        onDragStart={editMode ? () => onTileDragStart(idx) : undefined}
-                        onDragEnter={editMode ? () => onTileDragEnter(idx) : undefined}
-                        onDragOver={editMode ? e => e.preventDefault() : undefined}
-                        onDrop={editMode ? () => onTileDrop(idx) : undefined}
-                        onDragEnd={editMode ? onTileDragEnd : undefined}
+                        draggable
+                        onDragStart={() => onTileDragStart(idx)}
+                        onDragEnter={() => onTileDragEnter(idx)}
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={() => onTileDrop(idx)}
+                        onDragEnd={onTileDragEnd}
                       >
-                        {/* × badge */}
-                        {editMode && (
-                          <button
-                            onClick={e => { e.stopPropagation(); hideGridItem(idx); }}
-                            className="absolute flex items-center justify-center rounded-full"
-                            style={{ top: -8, left: -8, zIndex: 20, width: 22, height: 22, backgroundColor: "#3a3a3c", border: "2px solid var(--bg-base)", color: "white", cursor: "pointer" }}
-                          >
-                            <svg width="8" height="8" viewBox="0 0 10 10" fill="none"><line x1="2" y1="2" x2="8" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
-                          </button>
-                        )}
+                        <button
+                          onClick={e => { e.stopPropagation(); hideGridItem(idx); }}
+                          style={{
+                            position: "absolute", top: -7, left: -7, zIndex: 20,
+                            width: 20, height: 20, borderRadius: "50%",
+                            backgroundColor: "#3a3a3c", border: "2px solid var(--bg-base)",
+                            color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
+                        >
+                          <svg width="7" height="7" viewBox="0 0 10 10" fill="none"><line x1="2" y1="2" x2="8" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                        </button>
 
                         <button
-                          onClick={() => {
-                            if (editMode) { setEditingTileId(mod.id); return; }
-                            router.push(mod.href); onClose();
-                          }}
-                          className="flex flex-col items-center justify-center gap-2.5 rounded-2xl w-full"
+                          onClick={() => setEditingTileId(mod.id)}
                           style={{
-                            height: 130,
-                            backgroundColor: isMergeTgt ? "rgba(59,130,246,0.2)" : (active ? "rgba(59,130,246,0.1)" : "var(--bg-surface)"),
+                            width: "100%", height: 100, borderRadius: 12,
+                            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 8px 12px",
+                            backgroundColor: isMergeTgt ? "rgba(59,130,246,0.18)" : (active ? "rgba(59,130,246,0.1)" : "var(--bg-surface)"),
                             border: `1.5px solid ${isMergeTgt || active ? "var(--accent-blue)" : "var(--border)"}`,
                             color: active ? "var(--accent-blue)" : "var(--text-secondary)",
-                            boxShadow: isMergeTgt ? "0 0 0 3px rgba(59,130,246,0.25)" : "none",
+                            boxShadow: isMergeTgt ? "0 0 0 3px rgba(59,130,246,0.2)" : "none",
                             transition: "box-shadow 0.15s, background-color 0.15s",
                             cursor: "pointer",
                           }}
                         >
-                          <TileIcon mod={mod} size={30} />
-                          <span className="text-xs font-medium text-center" style={{ color: "inherit", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden", lineHeight: 1.3, maxWidth: "88%", wordBreak: "break-word" }}>
+                          <TileIcon mod={mod} size={24} />
+                          <span style={{ fontSize: 11, fontWeight: 500, textAlign: "center", color: "inherit", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden", lineHeight: 1.3, maxWidth: "100%", wordBreak: "break-word" }}>
                             {mod.label}
                           </span>
                         </button>
@@ -914,55 +989,50 @@ export default function ModuleLauncher({
                     );
                   }
 
-                  // Folder tile
                   const folder = folders.find(f => f.id === item.id);
                   if (!folder) return null;
 
                   return (
                     <div
                       key={item.id}
-                      className="relative flex-shrink-0"
                       style={{
-                        width: 130,
-                        animation: editMode
-                          ? `jiggle 0.18s ${(idx * 73) % 350}ms ease-in-out infinite ${idx % 2 === 0 ? "alternate" : "alternate-reverse"}`
-                          : "none",
-                        opacity: isDragging ? 0.35 : 1,
-                        transition: "opacity 0.12s",
-                        cursor: editMode ? "grab" : "auto",
+                        position: "relative", flexShrink: 0, width: 108,
+                        animation: `jiggle 0.18s ${(idx * 73) % 350}ms ease-in-out infinite ${idx % 2 === 0 ? "alternate" : "alternate-reverse"}`,
+                        opacity: isDragging ? 0.3 : 1, transition: "opacity 0.12s", cursor: "grab",
                       }}
-                      draggable={editMode}
-                      onDragStart={editMode ? () => onTileDragStart(idx) : undefined}
-                      onDragEnter={editMode ? () => onTileDragEnter(idx) : undefined}
-                      onDragOver={editMode ? e => e.preventDefault() : undefined}
-                      onDrop={editMode ? () => onTileDrop(idx) : undefined}
-                      onDragEnd={editMode ? onTileDragEnd : undefined}
+                      draggable
+                      onDragStart={() => onTileDragStart(idx)}
+                      onDragEnter={() => onTileDragEnter(idx)}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={() => onTileDrop(idx)}
+                      onDragEnd={onTileDragEnd}
                     >
-                      {editMode && (
-                        <button
-                          onClick={e => { e.stopPropagation(); hideGridItem(idx); }}
-                          className="absolute flex items-center justify-center rounded-full"
-                          style={{ top: -8, left: -8, zIndex: 20, width: 22, height: 22, backgroundColor: "#3a3a3c", border: "2px solid var(--bg-base)", color: "white", cursor: "pointer" }}
-                        >
-                          <svg width="8" height="8" viewBox="0 0 10 10" fill="none"><line x1="2" y1="2" x2="8" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
-                        </button>
-                      )}
+                      <button
+                        onClick={e => { e.stopPropagation(); hideGridItem(idx); }}
+                        style={{
+                          position: "absolute", top: -7, left: -7, zIndex: 20,
+                          width: 20, height: 20, borderRadius: "50%",
+                          backgroundColor: "#3a3a3c", border: "2px solid var(--bg-base)",
+                          color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                        }}
+                      >
+                        <svg width="7" height="7" viewBox="0 0 10 10" fill="none"><line x1="2" y1="2" x2="8" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                      </button>
 
                       <button
                         onClick={() => setOpenFolderId(folder.id)}
-                        className="flex flex-col items-center justify-center gap-2.5 rounded-2xl w-full"
                         style={{
-                          height: 130,
-                          backgroundColor: isMergeTgt ? "rgba(59,130,246,0.2)" : "var(--bg-surface)",
+                          width: "100%", height: 100, borderRadius: 12,
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 8px 12px",
+                          backgroundColor: isMergeTgt ? "rgba(59,130,246,0.18)" : "var(--bg-surface)",
                           border: `1.5px solid ${isMergeTgt ? "var(--accent-blue)" : "var(--border)"}`,
                           color: "var(--text-secondary)",
-                          boxShadow: isMergeTgt ? "0 0 0 3px rgba(59,130,246,0.25)" : "none",
-                          transition: "box-shadow 0.15s, background-color 0.15s",
-                          cursor: "pointer",
+                          boxShadow: isMergeTgt ? "0 0 0 3px rgba(59,130,246,0.2)" : "none",
+                          transition: "box-shadow 0.15s, background-color 0.15s", cursor: "pointer",
                         }}
                       >
-                        <FolderThumbnail folder={folder} modules={modules} size={48} />
-                        <span className="text-xs font-medium text-center" style={{ color: "inherit", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden", lineHeight: 1.3, maxWidth: "88%" }}>
+                        <FolderThumbnail folder={folder} modules={modules} size={44} />
+                        <span style={{ fontSize: 11, fontWeight: 500, textAlign: "center", color: "inherit", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden", lineHeight: 1.3, maxWidth: "100%" }}>
                           {folder.label}
                         </span>
                       </button>
@@ -970,51 +1040,66 @@ export default function ModuleLauncher({
                   );
                 })}
 
-                {/* + New Module tile (edit mode) */}
-                {editMode && (
-                  <button
-                    onClick={addCustomModule}
-                    className="flex flex-col items-center justify-center gap-2 rounded-2xl pressable flex-shrink-0"
-                    style={{ width: 130, height: 130, border: "1.5px dashed var(--border)", color: "var(--text-secondary)", backgroundColor: "transparent" }}
-                  >
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    <span className="text-xs font-medium">New</span>
-                  </button>
-                )}
+                {/* + New tile */}
+                <button
+                  onClick={addCustomModule}
+                  style={{
+                    flexShrink: 0, width: 108, height: 100, borderRadius: 12,
+                    border: "1.5px dashed var(--border)", color: "var(--text-secondary)",
+                    backgroundColor: "transparent", display: "flex", flexDirection: "column",
+                    alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer",
+                  }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span style={{ fontSize: 11, fontWeight: 500 }}>New App</span>
+                </button>
               </div>
 
-              {/* Hidden modules section */}
-              {editMode && hiddenModules.length > 0 && (
-                <div className="max-w-2xl mx-auto mt-8">
-                  <p className="text-xs font-medium mb-3 px-1" style={{ color: "var(--text-secondary)" }}>Hidden — tap + to restore{hiddenModules.some(m => m.custom) ? " · tap 🗑 to permanently delete" : ""}</p>
-                  <div className="flex flex-wrap gap-3 justify-center">
-                    {hiddenModules.map((mod) => (
-                      <div key={mod.id} className="relative flex-shrink-0" style={{ width: 130, opacity: 0.5 }}>
-                        {/* Restore button */}
+              {/* Hidden modules */}
+              {hiddenModules.length > 0 && (
+                <div style={{ marginTop: 36 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                      Hidden
+                    </span>
+                    <div style={{ flex: 1, height: 1, backgroundColor: "var(--border)" }} />
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                    {hiddenModules.map(mod => (
+                      <div key={mod.id} style={{ position: "relative", flexShrink: 0, width: 108, opacity: 0.5 }}>
                         <button
                           onClick={() => restoreModule(mod.id)}
-                          className="absolute flex items-center justify-center rounded-full"
-                          style={{ top: -8, left: -8, zIndex: 20, width: 22, height: 22, backgroundColor: "var(--accent-green)", border: "2px solid var(--bg-base)", color: "white", cursor: "pointer" }}
+                          style={{
+                            position: "absolute", top: -7, left: -7, zIndex: 20,
+                            width: 20, height: 20, borderRadius: "50%",
+                            backgroundColor: "#16a34a", border: "2px solid var(--bg-base)",
+                            color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
                         >
-                          <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><line x1="5" y1="2" x2="5" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/><line x1="2" y1="5" x2="8" y2="5" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                          <svg width="8" height="8" viewBox="0 0 10 10" fill="none"><line x1="5" y1="2" x2="5" y2="8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/><line x1="2" y1="5" x2="8" y2="5" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
                         </button>
-                        {/* Permanent delete (custom modules only) */}
                         {mod.custom && (
                           <button
                             onClick={() => {
-                              if (confirm(`Permanently delete "${mod.label}"? This cannot be undone.`)) {
-                                deleteModulePermanently(mod.id);
-                              }
+                              if (confirm(`Permanently delete "${mod.label}"?`)) deleteModulePermanently(mod.id);
                             }}
-                            className="absolute flex items-center justify-center rounded-full"
-                            style={{ top: -8, right: -8, zIndex: 20, width: 22, height: 22, backgroundColor: "#dc2626", border: "2px solid var(--bg-base)", color: "white", cursor: "pointer" }}
+                            style={{
+                              position: "absolute", top: -7, right: -7, zIndex: 20,
+                              width: 20, height: 20, borderRadius: "50%",
+                              backgroundColor: "#dc2626", border: "2px solid var(--bg-base)",
+                              color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                            }}
                           >
                             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                           </button>
                         )}
-                        <div className="flex flex-col items-center justify-center gap-2.5 rounded-2xl w-full" style={{ height: 130, backgroundColor: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
-                          <TileIcon mod={mod} size={30} />
-                          <span className="text-xs font-medium text-center" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden", lineHeight: 1.3, maxWidth: "88%" }}>{mod.label}</span>
+                        <div style={{
+                          width: "100%", height: 100, borderRadius: 12,
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 8px 12px",
+                          backgroundColor: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text-secondary)",
+                        }}>
+                          <TileIcon mod={mod} size={24} />
+                          <span style={{ fontSize: 11, fontWeight: 500, textAlign: "center", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden", lineHeight: 1.3, maxWidth: "100%" }}>{mod.label}</span>
                         </div>
                       </div>
                     ))}
@@ -1028,21 +1113,18 @@ export default function ModuleLauncher({
 
       {/* Soon toast */}
       {soonMsg && (
-        <div
-          style={{
-            position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)",
-            zIndex: 200, backgroundColor: "rgba(20,20,24,0.94)", color: "rgba(255,255,255,0.88)",
-            padding: "10px 20px", borderRadius: 12, fontSize: 13, fontWeight: 500,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.4)", backdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.1)", whiteSpace: "nowrap",
-            animation: "fadeInUp 0.2s ease-out",
-          }}
-        >
+        <div style={{
+          position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)",
+          zIndex: 200, backgroundColor: "rgba(20,20,24,0.94)", color: "rgba(255,255,255,0.88)",
+          padding: "10px 20px", borderRadius: 12, fontSize: 13, fontWeight: 500,
+          boxShadow: "0 4px 24px rgba(0,0,0,0.4)", backdropFilter: "blur(12px)",
+          border: "1px solid rgba(255,255,255,0.1)", whiteSpace: "nowrap",
+          animation: "fadeInUp 0.2s ease-out",
+        }}>
           🔜 {soonMsg}
         </div>
       )}
 
-      {/* Tile edit bottom sheet */}
       {editingMod && !iconPickerForId && (
         <TileEditSheet
           mod={editingMod}
@@ -1052,7 +1134,6 @@ export default function ModuleLauncher({
         />
       )}
 
-      {/* Icon picker */}
       {iconPickerForId && iconPickerMod && (
         <IconPicker
           current={iconPickerMod.emoji}

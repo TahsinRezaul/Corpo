@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTheme, ThemeToggle, NAV_TABS } from "@/components/NavBar";
+import UserMenu from "@/components/UserMenu";
 import ModuleLauncher, {
   loadAll, saveAll,
   type ModuleEntry, type GridEntry, type Folder,
@@ -36,32 +37,32 @@ function fmt(n: number) {
   return n.toLocaleString("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
 }
 
-// ── CORPO title ────────────────────────────────────────────────────────────────
+// ── Brand mark ─────────────────────────────────────────────────────────────────
 
-function CorpoTitle() {
-  const [visible, setVisible] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setVisible(true), 60); return () => clearTimeout(t); }, []);
+function CorpoMark({ size = 32, isDark = true }: { size?: number; isDark?: boolean }) {
+  // Legs are dark navy on light bg; muted blue-white on dark bg
+  const legColor = isDark ? "rgba(210,222,245,0.82)" : "#061A35";
   return (
-    <span
-      style={{
-        display: "inline-block",
-        fontSize: "clamp(60px, 14vw, 160px)",
-        fontWeight: 900,
-        letterSpacing: "-0.05em",
-        paddingRight: "0.05em",
-        lineHeight: 1,
-        background: "linear-gradient(135deg, #3b82f6 0%, #60a5fa 55%, #93c5fd 100%)",
-        WebkitBackgroundClip: "text",
-        WebkitTextFillColor: "transparent",
-        backgroundClip: "text",
-        userSelect: "none",
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0)" : "translateY(16px)",
-        transition: "opacity 0.6s cubic-bezier(0.22,1,0.36,1), transform 0.6s cubic-bezier(0.22,1,0.36,1)",
-      }}
-    >
-      CORPO
-    </span>
+    <svg width={size} height={size} viewBox="290 170 440 440" fill="none" aria-label="CORPO">
+      <defs>
+        <linearGradient id="corpo-blue-arc" x1="332" y1="250" x2="704" y2="604" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#3B48FF"/>
+          <stop offset="1" stopColor="#2738F4"/>
+        </linearGradient>
+        <linearGradient id="corpo-teal-ring" x1="444" y1="332" x2="589" y2="488" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#16C8BC"/>
+          <stop offset="1" stopColor="#00A99D"/>
+        </linearGradient>
+      </defs>
+      {/* Exact coordinates from corpo_logo.svg, translate(0,-10) baked in */}
+      {/* Outer C arc */}
+      <path d="M 684 353 A 178 178 0 1 0 512 580" stroke="url(#corpo-blue-arc)" strokeWidth="58" strokeLinecap="round"/>
+      {/* R legs — rendered before ring so ring sits on top */}
+      <line x1="512" y1="458" x2="512" y2="580" stroke={legColor} strokeWidth="42" strokeLinecap="round"/>
+      <line x1="559" y1="458" x2="666" y2="580" stroke={legColor} strokeWidth="42" strokeLinecap="round"/>
+      {/* Inner teal ring — on top of legs */}
+      <circle cx="512" cy="395" r="67" stroke="url(#corpo-teal-ring)" strokeWidth="55" fill="none"/>
+    </svg>
   );
 }
 
@@ -272,17 +273,17 @@ function StatsStrip({ isDark }: { isDark: boolean }) {
 
   return (
     <div
-      className="grid grid-cols-4 rounded-2xl overflow-hidden w-full max-w-xl"
-      style={{ border: `1px solid ${border}`, backgroundColor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)" }}
+      className="grid grid-cols-4 rounded-2xl overflow-hidden w-full"
+      style={{ maxWidth: 680, border: `1px solid ${border}`, backgroundColor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)" }}
     >
       {items.map((item, idx) => (
         <div
           key={item.label}
-          className="flex flex-col items-center py-3 px-2"
+          className="flex flex-col items-center py-5 px-3"
           style={{ borderRight: idx < items.length - 1 ? `1px solid ${border}` : "none" }}
         >
-          <span className="text-xs mb-0.5" style={{ color: "var(--text-secondary)" }}>{item.label}</span>
-          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{item.value}</span>
+          <span className="text-xs font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>{item.label}</span>
+          <span style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1 }}>{item.value}</span>
         </div>
       ))}
     </div>
@@ -579,7 +580,6 @@ export default function HomePage() {
   const [searchOpen,    setSearchOpen]    = useState(false);
   const [launcherOpen,  setLauncherOpen]  = useState(false);
   const [editMode,      setEditMode]      = useState(false);
-  const subColor = isDark ? "rgba(255,255,255,0.22)" : "#9ca3af";
   const router = useRouter();
 
   // Redirect mobile users straight to the camera
@@ -603,9 +603,17 @@ export default function HomePage() {
         className="flex items-center justify-between px-5 py-3"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <span className="text-sm font-black tracking-tight" style={{ color: "var(--accent-blue)", letterSpacing: "-0.03em" }}>
-          CORPO
-        </span>
+        <div className="flex items-center gap-2.5">
+          <CorpoMark size={24} isDark={isDark} />
+          <span style={{
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: "0.22em",
+            color: "var(--text-primary)",
+          }}>
+            CORPO
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           {/* Search */}
           <button
@@ -631,22 +639,14 @@ export default function HomePage() {
             </svg>
           </Link>
           <ThemeToggle theme={theme} toggle={toggle} />
+          <UserMenu />
         </div>
       </header>
 
       {/* ── Main ───────────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col items-center px-5 py-10 gap-8">
+      <main className="flex-1 flex flex-col items-center px-5 py-7 gap-6">
 
-        {/* Logo + tagline */}
-        <div className="flex flex-col items-center gap-4">
-          <CorpoTitle />
-          <p className="text-center whitespace-nowrap" style={{ fontSize: 13 }}>
-            <span style={{ color: subColor }}>Taxes, filings & receipts — </span>
-            <span style={{ color: isDark ? "#fbbf24" : "#d97706", fontWeight: 500 }}>built for Canadian incorporations.</span>
-          </p>
-        </div>
-
-        {/* Stats */}
+        {/* Stats — first thing you see */}
         <StatsStrip isDark={isDark} />
 
         {/* Module tiles — inline edit */}

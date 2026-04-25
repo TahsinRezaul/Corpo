@@ -4,11 +4,15 @@ import ConditionalNavBar from "@/components/ConditionalNavBar";
 import ConditionalPadding from "@/components/ConditionalPadding";
 import ScrollToTop from "@/components/ScrollToTop";
 import BackgroundParser from "@/components/BackgroundParser";
+import DataSync from "@/components/DataSync";
 import { SessionProvider } from "next-auth/react";
+import { BackgroundTasksProvider } from "@/contexts/BackgroundTasksContext";
+import NotificationCheck from "@/components/NotificationCheck";
 
 export const metadata: Metadata = {
   title: "CORPO",
   description: "Canadian business tax, simplified",
+  icons: { icon: "/favicon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -24,12 +28,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         ` }} />
       </head>
       <body>
-        <SessionProvider>
-          <ConditionalNavBar />
-          <BackgroundParser />
-          <ConditionalPadding>{children}</ConditionalPadding>
-          <ScrollToTop />
-        </SessionProvider>
+        <BackgroundTasksProvider>
+          <SessionProvider>
+            <DataSync />
+            <NotificationCheck />
+            <ConditionalNavBar />
+            <BackgroundParser />
+            <ConditionalPadding>{children}</ConditionalPadding>
+            <ScrollToTop />
+          </SessionProvider>
+        </BackgroundTasksProvider>
       </body>
     </html>
   );

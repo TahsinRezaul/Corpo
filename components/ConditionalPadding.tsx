@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 
-const NO_PAD = ["/login", "/admin"];
+const NO_PAD = ["/login"];
 
 export default function ConditionalPadding({ children }: { children: React.ReactNode }) {
   const path = usePathname();

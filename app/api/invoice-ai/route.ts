@@ -53,8 +53,7 @@ User request: ${prompt}`;
 
     return NextResponse.json({ patch });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Invoice AI error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("Invoice AI error:", err instanceof Error ? err.message : String(err));
+    return NextResponse.json({ error: "Failed to process the request. Please try again." }, { status: 500 });
   }
 }

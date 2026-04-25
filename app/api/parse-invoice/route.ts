@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(parsed);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("Parse invoice error:", err instanceof Error ? err.message : String(err));
+    return NextResponse.json({ error: "Failed to process the file. Please try again." }, { status: 500 });
   }
 }

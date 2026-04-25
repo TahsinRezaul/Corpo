@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { pbkdf2Sync, randomBytes } from "crypto";
+import { pbkdf2Sync, randomBytes, timingSafeEqual } from "crypto";
 
 const DATA_DIR   = join(process.cwd(), "data");
 const USERS_FILE = join(DATA_DIR, "users.json");
@@ -9,8 +9,8 @@ export type StoredUser = {
   id: string;
   email: string;
   name: string;
-  passwordHash: string;
-  salt: string;
+  passwordHash?: string;
+  salt?: string;
   createdAt: string;
 };
 
@@ -33,7 +33,27 @@ export function findByEmail(email: string): StoredUser | null {
 }
 
 export function verifyPassword(user: StoredUser, password: string): boolean {
-  return hashPassword(password, user.salt) === user.passwordHash;
+  if (!user.passwordHash || !user.salt) return false;
+  const actual   = Buffer.from(hashPassword(password, user.salt));
+  const expected = Buffer.from(user.passwordHash);
+  if (actual.length !== expected.length) return false;
+  return timingSafeEqual(actual, expected);
+}
+
+export function upsertOAuthUser(email: string, name: string): StoredUser {
+  const norm = email.toLowerCase().trim();
+  const existing = findByEmail(norm);
+  if (existing) return existing;
+  const user: StoredUser = {
+    id: randomBytes(8).toString("hex"),
+    email: norm,
+    name: (name || norm).trim(),
+    createdAt: new Date().toISOString(),
+  };
+  const users = loadUsers();
+  users.push(user);
+  saveUsers(users);
+  return user;
 }
 
 export function createUser(email: string, name: string, password: string): StoredUser {

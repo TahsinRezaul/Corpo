@@ -175,8 +175,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ...parsed, _thumbnail: `data:image/jpeg;base64,${thumb.toString("base64")}` });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Parse error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("Parse error:", err instanceof Error ? err.message : String(err));
+    return NextResponse.json({ error: "Failed to process the file. Please try again." }, { status: 500 });
   }
 }

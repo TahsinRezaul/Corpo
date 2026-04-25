@@ -3,10 +3,12 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getSaved, deleteSaved, updateSaved, getDismissedNotifs, dismissNotif, CATEGORIES, categoryStyle, EMPTY_FORM, getSettings, type SavedReceipt, type ReceiptForm } from "@/lib/storage";
+import { getSaved, deleteSaved, updateSaved, getDismissedNotifs, dismissNotif, CATEGORIES, categoryStyle, EMPTY_FORM, getSettings, parseIntervalDays, intervalLabel, type SavedReceipt, type ReceiptForm } from "@/lib/storage";
+import IntervalPicker from "@/components/IntervalPicker";
 import * as XLSX from "xlsx";
 import PageHelp from "@/components/PageHelp";
 import { PAGE_HELP } from "@/lib/page-help-content";
+import ImageLightbox from "@/components/ImageLightbox";
 
 type Filters = {
   search: string;
@@ -15,7 +17,7 @@ type Filters = {
   dateTo: string;
 };
 
-type SortBy = "date" | "total" | "vendor" | "category" | null;
+type SortBy = "date" | "total" | "vendor" | "category" | "subscription" | null;
 type SortOrder = "asc" | "desc";
 type ViewMode = "list" | "medium" | "large";
 
@@ -117,16 +119,27 @@ export default function RecordsPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<ReceiptForm>({ ...EMPTY_FORM });
 
+  // ── Fullscreen image viewer ────────────────────────────────────────────────
+  const [fullscreenImg, setFullscreenImg] = useState<string | null>(null);
+
   // ── Notification state ─────────────────────────────────────────────────────
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
   const [notifOpen, setNotifOpen] = useState(false);
+
+  const [notifSettings, setNotifSettings] = useState({ subs: true, dups: true, incomplete: true });
 
   useEffect(() => {
     setReceipts(getSaved());
     const saved = localStorage.getItem("recordsView") as ViewMode | null;
     if (saved === "list" || saved === "medium" || saved === "large") setView(saved);
     setDismissedKeys(getDismissedNotifs());
-    setAgentProMode(getSettings().aiProMode);
+    const s = getSettings();
+    setAgentProMode(s.aiProMode);
+    setNotifSettings({
+      subs: s.notif_subscriptionReminders ?? true,
+      dups: s.notif_duplicateWarnings ?? true,
+      incomplete: s.notif_incompleteReceipts ?? true,
+    });
   }, []);
 
   // Escape key exits select mode
@@ -252,15 +265,20 @@ export default function RecordsPage() {
 
   const filtered = [...highlightFiltered].sort((a, b) => {
     if (!sortBy) return 0;
-    let va = "", vb = "";
-    if (sortBy === "date")     { va = a.date;     vb = b.date; }
-    if (sortBy === "vendor")   { va = a.vendor;   vb = b.vendor; }
-    if (sortBy === "category") { va = a.category; vb = b.category; }
+    if (sortBy === "subscription") {
+      const aV = a.recurring ? 1 : 0;
+      const bV = b.recurring ? 1 : 0;
+      return sortOrder === "asc" ? aV - bV : bV - aV;
+    }
     if (sortBy === "total") {
       const na = parseFloat(a.total.replace(/[^0-9.]/g, "")) || 0;
       const nb = parseFloat(b.total.replace(/[^0-9.]/g, "")) || 0;
       return sortOrder === "asc" ? na - nb : nb - na;
     }
+    let va = "", vb = "";
+    if (sortBy === "date")     { va = a.date;     vb = b.date; }
+    if (sortBy === "vendor")   { va = a.vendor;   vb = b.vendor; }
+    if (sortBy === "category") { va = a.category; vb = b.category; }
     return sortOrder === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
   });
 
@@ -394,16 +412,44 @@ export default function RecordsPage() {
     const latest = group.sort((a, b) => b.date.localeCompare(a.date))[0];
     if (!latest.date) return;
     const daysSince = Math.floor((today.getTime() - new Date(latest.date).getTime()) / (24 * 60 * 60 * 1000));
-    const threshold = latest.recurringInterval === "yearly" ? 350 : 28;
+    const threshold = parseIntervalDays(latest.recurringInterval) || 30;
     const subKey = `sub::${vk}`;
     if (daysSince >= threshold && !seenVendors.has(vk)) {
       seenVendors.add(vk);
       allDueSubs.push({ vendor: latest.vendor, interval: latest.recurringInterval!, daysSince, key: subKey });
     }
   });
-  const activeDueSubs = allDueSubs.filter((s) => !dismissedKeys.has(s.key));
 
-  const totalNotifCount = activeDupPairs.length + activeDueSubs.length;
+  // ── Subscription auto-detection ───────────────────────────────────────────
+  const SUB_KEYWORDS = [
+    "netflix", "spotify", "apple", "disney", "hulu", "amazon prime", "youtube",
+    "dropbox", "google one", "microsoft", "office 365", "adobe", "figma", "notion",
+    "slack", "zoom", "github", "aws", "digitalocean", "vercel", "netlify", "shopify",
+    "quickbooks", "openai", "anthropic", "cloudflare", "1password", "lastpass",
+    "mcafee", "norton", "dashlane", "vpn", "antivirus", "domain", "hosting",
+  ];
+  const suggestedSubIds = new Set(
+    receipts
+      .filter((r) => !r.recurring)
+      .filter((r) => SUB_KEYWORDS.some((kw) => r.vendor.toLowerCase().includes(kw)))
+      .map((r) => r.id)
+  );
+  // Also suggest repeated-same-total vendors (2+ receipts, same total)
+  const totalByVendor = new Map<string, SavedReceipt[]>();
+  receipts.filter((r) => !r.recurring && r.vendor && r.total).forEach((r) => {
+    const k = `${r.vendor.toLowerCase()}::${r.total}`;
+    if (!totalByVendor.has(k)) totalByVendor.set(k, []);
+    totalByVendor.get(k)!.push(r);
+  });
+  totalByVendor.forEach((group) => {
+    if (group.length >= 2) group.forEach((r) => suggestedSubIds.add(r.id));
+  });
+  const activeDueSubs    = notifSettings.subs       ? allDueSubs.filter((s) => !dismissedKeys.has(s.key))     : [];
+  const visibleDupPairs  = notifSettings.dups       ? activeDupPairs                                           : [];
+  const visibleDupIds    = notifSettings.dups       ? duplicateIds                                             : new Set<string>();
+  const visibleDupInfo   = notifSettings.dups       ? dupInfo                                                  : new Map<string, { tooltip: string; pairKey: string }>();
+
+  const totalNotifCount = visibleDupPairs.length + activeDueSubs.length;
 
   const inputStyle: React.CSSProperties = {
     backgroundColor: "var(--bg-elevated)",
@@ -527,7 +573,7 @@ export default function RecordsPage() {
                                       <div className="flex-1 min-w-0">
                                         <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{sub.vendor}</p>
                                         <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
-                                          {sub.interval === "monthly" ? "Monthly" : "Yearly"} — {sub.daysSince} days since last upload
+                                          {intervalLabel(sub.interval)} — {sub.daysSince} days since last upload
                                         </p>
                                         <button onClick={() => { setFilter("search", sub.vendor); setNotifOpen(false); }}
                                           className="text-xs mt-1.5"
@@ -546,11 +592,11 @@ export default function RecordsPage() {
                               )}
 
                               {/* Duplicate warnings */}
-                              {activeDupPairs.length > 0 && (
+                              {visibleDupPairs.length > 0 && (
                                 <div>
                                   <p className="px-4 pt-3 pb-1 text-xs font-semibold tracking-wider"
                                     style={{ color: "var(--text-secondary)" }}>POSSIBLE DUPLICATES</p>
-                                  {activeDupPairs.map((pair) => {
+                                  {visibleDupPairs.map((pair) => {
                                     const fmtDate = (d: string) => d ? new Date(d).toLocaleDateString("en-CA", { month: "short", day: "numeric" }) : "?";
                                     return (
                                       <div key={pair.key}
@@ -637,7 +683,7 @@ export default function RecordsPage() {
                     <path d="M13.73 21a2 2 0 0 1-3.46 0" />
                   </svg>
                   <span className="truncate" style={{ color: "var(--accent-amber)" }}>
-                    <strong>{sub.vendor}</strong> — {sub.interval}, {sub.daysSince}d overdue
+                    <strong>{sub.vendor}</strong> — {intervalLabel(sub.interval)}, {sub.daysSince}d overdue
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -679,6 +725,9 @@ export default function RecordsPage() {
           </div>
         ) : (
           <>
+            {/* Summary bar */}
+            <SummaryBar receipts={filtered} />
+
             {/* Filter bar + view toggle */}
             <div
               className="flex flex-wrap gap-3 mb-4 p-4 rounded-xl"
@@ -749,13 +798,13 @@ export default function RecordsPage() {
             </div>
 
             {/* Sort controls */}
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
               <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Sort:</span>
-              {(["date", "vendor", "total", "category"] as SortBy[]).map((s) => (
-                <button key={s} onClick={() => { if (sortBy === s) setSortOrder(o => o === "asc" ? "desc" : "asc"); else { setSortBy(s); setSortOrder(s === "date" || s === "total" ? "desc" : "asc"); } }}
+              {(["date", "vendor", "total", "category", "subscription"] as SortBy[]).map((s) => (
+                <button key={s} onClick={() => { if (sortBy === s) setSortOrder(o => o === "asc" ? "desc" : "asc"); else { setSortBy(s); setSortOrder(s === "date" || s === "total" || s === "subscription" ? "desc" : "asc"); } }}
                   className="text-xs px-2.5 py-1 rounded-lg"
                   style={{ backgroundColor: sortBy === s ? "var(--accent-blue)" : "var(--bg-elevated)", color: sortBy === s ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border)" }}>
-                  {s === "date" ? "Date" : s === "vendor" ? "A–Z" : s === "total" ? "Amount" : "Category"}
+                  {s === "date" ? "Date" : s === "vendor" ? "A–Z" : s === "total" ? "Amount" : s === "category" ? "Category" : "⟳ Subscription"}
                   {sortBy === s && (sortOrder === "asc" ? " ↑" : " ↓")}
                 </button>
               ))}
@@ -770,7 +819,7 @@ export default function RecordsPage() {
             )}
 
             {/* Incomplete entries banner */}
-            {(() => {
+            {notifSettings.incomplete && (() => {
               const incompleteIds = receipts.filter((r) => !r.vendor && !r.total && !r.date).map((r) => r.id);
               if (incompleteIds.length === 0) return null;
               return (
@@ -804,21 +853,26 @@ export default function RecordsPage() {
                 selectMode={selectMode}
                 selectedIds={selectedIds}
                 onToggle={toggleSelect}
-                duplicateIds={duplicateIds}
-                dupInfo={dupInfo}
+                duplicateIds={visibleDupIds}
+                dupInfo={visibleDupInfo}
                 onDismissDup={handleDismiss}
+                suggestedSubIds={suggestedSubIds}
+                onMarkSub={(id) => { updateSaved(id, { recurring: true, recurringInterval: "1m" }); setReceipts(getSaved()); }}
               />
             ) : (
               <CardGrid
                 receipts={filtered}
                 onSelect={(id) => { if (!selectMode) setSelectedId(id); }}
+                onZoom={(src) => setFullscreenImg(src)}
                 view={view}
                 selectMode={selectMode}
                 selectedIds={selectedIds}
                 onToggle={toggleSelect}
-                duplicateIds={duplicateIds}
-                dupInfo={dupInfo}
+                duplicateIds={visibleDupIds}
+                dupInfo={visibleDupInfo}
                 onDismissDup={handleDismiss}
+                suggestedSubIds={suggestedSubIds}
+                onMarkSub={(id) => { updateSaved(id, { recurring: true, recurringInterval: "1m" }); setReceipts(getSaved()); }}
               />
             )}
           </>
@@ -853,11 +907,25 @@ export default function RecordsPage() {
 
             {/* Thumbnail — only in view mode */}
             {!isEditing && selected.thumbnail.startsWith("data:") && (
-              <div className="flex items-center justify-center p-4"
-                style={{ borderBottom: "1px solid var(--border)", backgroundColor: "var(--bg-elevated)" }}>
+              <div
+                className="flex items-center justify-center p-4 group/thumb relative cursor-zoom-in"
+                style={{ borderBottom: "1px solid var(--border)", backgroundColor: "var(--bg-elevated)" }}
+                onClick={() => setFullscreenImg(selected.thumbnail)}
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={selected.thumbnail} alt="Receipt" className="max-w-full rounded-lg"
                   style={{ maxHeight: "300px", objectFit: "contain" }} />
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity rounded-b"
+                  style={{ backgroundColor: "rgba(0,0,0,0.25)" }}>
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                    style={{ backgroundColor: "rgba(0,0,0,0.6)", color: "#fff", backdropFilter: "blur(8px)" }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                      <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                    </svg>
+                    Full screen
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1006,20 +1074,10 @@ export default function RecordsPage() {
                     <span className="text-sm" style={{ color: "var(--text-primary)" }}>Recurring / Subscription</span>
                   </div>
                   {editForm.recurring && (
-                    <div className="mt-2 flex gap-2">
-                      {(["monthly", "yearly"] as const).map((interval) => (
-                        <button key={interval}
-                          onClick={() => setEditForm(f => ({ ...f, recurringInterval: interval }))}
-                          className="flex-1 py-2 rounded-lg text-sm font-medium"
-                          style={{
-                            backgroundColor: editForm.recurringInterval === interval ? "var(--accent-green)" : "var(--bg-elevated)",
-                            color: editForm.recurringInterval === interval ? "#fff" : "var(--text-secondary)",
-                            border: `1px solid ${editForm.recurringInterval === interval ? "var(--accent-green)" : "var(--border)"}`,
-                          }}>
-                          {interval.charAt(0).toUpperCase() + interval.slice(1)}
-                        </button>
-                      ))}
-                    </div>
+                    <IntervalPicker
+                      value={editForm.recurringInterval || "1m"}
+                      onChange={(v) => setEditForm(f => ({ ...f, recurringInterval: v }))}
+                    />
                   )}
                 </div>
               </div>
@@ -1139,6 +1197,11 @@ export default function RecordsPage() {
           </div>
         </div>
       )}
+      {/* Fullscreen image viewer */}
+      {fullscreenImg && (
+        <ImageLightbox src={fullscreenImg} onClose={() => setFullscreenImg(null)} />
+      )}
+
       {/* Agent panel */}
       {agentOpen && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -1278,6 +1341,8 @@ function ListGrid({
   duplicateIds,
   dupInfo,
   onDismissDup,
+  suggestedSubIds,
+  onMarkSub,
 }: {
   receipts: SavedReceipt[];
   onSelect: (id: string) => void;
@@ -1287,6 +1352,8 @@ function ListGrid({
   duplicateIds: Set<string>;
   dupInfo: Map<string, { tooltip: string; pairKey: string }>;
   onDismissDup: (key: string) => void;
+  suggestedSubIds: Set<string>;
+  onMarkSub: (id: string) => void;
 }) {
   const colTemplate = "32px 36px 1fr 100px minmax(120px,200px) 70px";
 
@@ -1387,6 +1454,18 @@ function ListGrid({
               {r.shareholder_loan && (
                 <span className="text-xs" style={{ color: "var(--accent-amber)" }}>Shareholder Loan</span>
               )}
+              {suggestedSubIds.has(r.id) && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onMarkSub(r.id); }}
+                  className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0"
+                  style={{ backgroundColor: "rgba(16,185,129,0.12)", color: "var(--accent-green)", border: "1px solid rgba(16,185,129,0.25)" }}
+                >
+                  ⟳ Mark subscription?
+                </button>
+              )}
+              <p className="text-xs" style={{ color: "var(--text-tertiary)", marginTop: 1 }}>
+                Uploaded {fmtUploaded(r.savedAt)}
+              </p>
             </div>
 
             {/* Date */}
@@ -1416,6 +1495,7 @@ function ListGrid({
 function CardGrid({
   receipts,
   onSelect,
+  onZoom,
   view,
   selectMode,
   selectedIds,
@@ -1423,9 +1503,12 @@ function CardGrid({
   duplicateIds,
   dupInfo,
   onDismissDup,
+  suggestedSubIds,
+  onMarkSub,
 }: {
   receipts: SavedReceipt[];
   onSelect: (id: string) => void;
+  onZoom: (src: string) => void;
   view: "medium" | "large";
   selectMode: boolean;
   selectedIds: Set<string>;
@@ -1433,6 +1516,8 @@ function CardGrid({
   duplicateIds: Set<string>;
   dupInfo: Map<string, { tooltip: string; pairKey: string }>;
   onDismissDup: (key: string) => void;
+  suggestedSubIds: Set<string>;
+  onMarkSub: (id: string) => void;
 }) {
   const isLarge = view === "large";
   const thumbHeight = isLarge ? 140 : 90;
@@ -1458,7 +1543,7 @@ function CardGrid({
             }}
           >
             {/* Thumbnail */}
-            <div className="flex items-center justify-center"
+            <div className="flex items-center justify-center group/card-thumb"
               style={{
                 height: `${thumbHeight}px`,
                 backgroundColor: "var(--bg-elevated)",
@@ -1469,6 +1554,25 @@ function CardGrid({
               {hasThumbnail
                 ? <img src={r.thumbnail} alt={r.vendor} className="w-full h-full object-cover" /> // eslint-disable-line @next/next/no-img-element
                 : <DocIcon size={isLarge ? 32 : 22} />}
+
+              {/* Zoom button — shows on hover when there's an image */}
+              {hasThumbnail && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onZoom(r.thumbnail); }}
+                  className="absolute opacity-0 group-hover/card-thumb:opacity-100 transition-opacity flex items-center justify-center rounded-full"
+                  style={{
+                    top: "8px", right: "8px", zIndex: 10,
+                    width: "26px", height: "26px",
+                    backgroundColor: "rgba(0,0,0,0.5)", color: "#fff",
+                    backdropFilter: "blur(4px)",
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                    <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                  </svg>
+                </button>
+              )}
 
               {/* Checkbox overlay — always visible */}
               <div
@@ -1528,20 +1632,40 @@ function CardGrid({
                 {r.date || "No date"}
               </p>
               {isLarge && (
-                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  {r.category && (
-                    <span className="text-xs px-2 py-0.5 rounded-full"
-                      style={{ backgroundColor: cs.bg, color: cs.text }}>
-                      {r.category}
-                    </span>
+                <>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    {r.category && (
+                      <span className="text-xs px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: cs.bg, color: cs.text }}>
+                        {r.category}
+                      </span>
+                    )}
+                    {r.shareholder_loan && (
+                      <span className="text-xs px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: "rgba(245,158,11,0.15)", color: "var(--accent-amber)" }}>
+                        Shareholder Loan
+                      </span>
+                    )}
+                    {r.recurring && (
+                      <span className="text-xs px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: "rgba(16,185,129,0.12)", color: "var(--accent-green)" }}>
+                        ⟳ Subscription
+                      </span>
+                    )}
+                  </div>
+                  {suggestedSubIds.has(r.id) && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onMarkSub(r.id); }}
+                      className="text-xs px-2 py-0.5 rounded-full font-medium mt-1.5"
+                      style={{ backgroundColor: "rgba(16,185,129,0.12)", color: "var(--accent-green)", border: "1px solid rgba(16,185,129,0.25)" }}
+                    >
+                      ⟳ Mark subscription?
+                    </button>
                   )}
-                  {r.shareholder_loan && (
-                    <span className="text-xs px-2 py-0.5 rounded-full"
-                      style={{ backgroundColor: "rgba(245,158,11,0.15)", color: "var(--accent-amber)" }}>
-                      Shareholder Loan
-                    </span>
-                  )}
-                </div>
+                  <p className="text-xs mt-1.5" style={{ color: "var(--text-tertiary)" }}>
+                    Uploaded {fmtUploaded(r.savedAt)}
+                  </p>
+                </>
               )}
               {!isLarge && r.category && (
                 <span className="inline-block text-xs px-1.5 py-0.5 rounded-full mt-1.5"
@@ -1553,6 +1677,93 @@ function CardGrid({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Summary bar ────────────────────────────────────────────────────────────────
+
+function parseAmt(s: string): number {
+  return parseFloat(s.replace(/[^0-9.]/g, "")) || 0;
+}
+
+function fmtMoney(n: number): string {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000)    return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
+function fmtUploaded(savedAt: string): string {
+  if (!savedAt) return "—";
+  try {
+    const d = new Date(savedAt);
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleDateString("en-CA", {
+      month: "short", day: "numeric",
+      ...(sameYear ? {} : { year: "numeric" }),
+    });
+  } catch { return "—"; }
+}
+
+function fmtDateRange(dates: string[]): string {
+  const valid = dates.filter(Boolean).sort();
+  if (valid.length === 0) return "—";
+  const fmt = (d: string) => {
+    try {
+      return new Date(d).toLocaleDateString("en-CA", { month: "short", year: "numeric" });
+    } catch { return d; }
+  };
+  if (valid.length === 1) return fmt(valid[0]);
+  const first = fmt(valid[0]);
+  const last  = fmt(valid[valid.length - 1]);
+  return first === last ? first : `${first} – ${last}`;
+}
+
+function SummaryBar({ receipts }: { receipts: SavedReceipt[] }) {
+  if (receipts.length === 0) return null;
+
+  const totalSpend = receipts.reduce((s, r) => s + parseAmt(r.total), 0);
+  const totalTax   = receipts.reduce((s, r) => s + parseAmt(r.tax),   0);
+  const period     = fmtDateRange(receipts.map((r) => r.date));
+
+  const topCategory = (() => {
+    const byCategory: Record<string, number> = {};
+    receipts.forEach((r) => {
+      if (r.category) byCategory[r.category] = (byCategory[r.category] ?? 0) + parseAmt(r.total);
+    });
+    const sorted = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+    return sorted[0]?.[0] ?? null;
+  })();
+
+  const tiles = [
+    { label: "Receipts",    value: String(receipts.length), sub: null },
+    { label: "Total Spend", value: fmtMoney(totalSpend),    sub: null },
+    { label: "HST / Tax",   value: fmtMoney(totalTax),      sub: null },
+    { label: "Period",      value: period,                   sub: null },
+    ...(topCategory ? [{ label: "Top Category", value: topCategory.split(" — ")[0].split(" (")[0], sub: null }] : []),
+  ];
+
+  return (
+    <div
+      className="grid mb-4 rounded-xl overflow-hidden"
+      style={{
+        gridTemplateColumns: `repeat(${tiles.length}, 1fr)`,
+        border: "1px solid var(--border)",
+        backgroundColor: "var(--border)",
+        gap: "1px",
+      }}
+    >
+      {tiles.map((t) => (
+        <div
+          key={t.label}
+          className="flex flex-col px-4 py-3"
+          style={{ backgroundColor: "var(--bg-surface)" }}
+        >
+          <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{t.label}</span>
+          <span className="text-sm font-semibold mt-0.5 truncate" style={{ color: "var(--text-primary)" }}>{t.value}</span>
+        </div>
+      ))}
     </div>
   );
 }

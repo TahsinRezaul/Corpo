@@ -2,19 +2,21 @@
 
 import { useState, useEffect } from "react";
 import { getSettings, saveSettings, type AppSettings, DEFAULT_LOCATION_BIAS, type LocationBias } from "@/lib/storage";
+import { requestBrowserPermission, getBrowserPermission } from "@/lib/notifications";
 import AddressInput, { resolvePlaceDetails, type PlaceResult } from "@/components/AddressInput";
 import PageHelp from "@/components/PageHelp";
 import { PAGE_HELP } from "@/lib/page-help-content";
 
-type Tab = "general" | "invoices" | "receipts" | "mileage" | "tax" | "ai";
+type Tab = "general" | "invoices" | "receipts" | "mileage" | "tax" | "ai" | "notifications";
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: "general",  label: "General" },
-  { key: "invoices", label: "Invoices" },
-  { key: "receipts", label: "Receipts" },
-  { key: "mileage",  label: "Mileage" },
-  { key: "tax",      label: "Tax" },
-  { key: "ai",       label: "AI" },
+  { key: "general",       label: "General" },
+  { key: "invoices",      label: "Invoices" },
+  { key: "receipts",      label: "Receipts" },
+  { key: "mileage",       label: "Mileage" },
+  { key: "tax",           label: "Tax" },
+  { key: "ai",            label: "AI" },
+  { key: "notifications", label: "Notifications" },
 ];
 
 const PROVINCES = [
@@ -282,10 +284,18 @@ function LocationBiasSection({ settings, patch }: { settings: AppSettings; patch
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+type ClearStep = "idle" | "warn" | "type" | "confirm";
+
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("general");
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saved, setSaved] = useState(false);
+  const [clearStep, setClearStep] = useState<ClearStep>("idle");
+  const [clearInput, setClearInput] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const [browserPerm, setBrowserPerm] = useState<NotificationPermission>("default");
+
+  useEffect(() => { setBrowserPerm(getBrowserPermission()); }, []);
 
   useEffect(() => { setSettings(getSettings()); }, []);
 
@@ -300,6 +310,18 @@ export default function SettingsPage() {
     saveSettings(settings);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function handleClearData() {
+    setClearing(true);
+    try {
+      await fetch("/api/userdata", { method: "DELETE" });
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = "/login";
+    } catch {
+      setClearing(false);
+    }
   }
 
   return (
@@ -498,6 +520,66 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* ── Notifications Tab ── */}
+      {tab === "notifications" && (
+        <div>
+          <SectionHeader>Browser Notifications</SectionHeader>
+          <SettingRow
+            label="Push Notifications"
+            hint="Show system notifications even when the app is in the background"
+          >
+            {browserPerm === "granted" ? (
+              <span className="text-xs px-3 py-1.5 rounded-full font-medium"
+                style={{ backgroundColor: "rgba(16,185,129,0.12)", color: "var(--accent-green)", border: "1px solid rgba(16,185,129,0.3)" }}>
+                Enabled ✓
+              </span>
+            ) : browserPerm === "denied" ? (
+              <span className="text-xs px-3 py-1.5 rounded-full"
+                style={{ backgroundColor: "rgba(248,113,113,0.1)", color: "#f87171", border: "1px solid rgba(248,113,113,0.25)" }}>
+                Blocked — update in browser settings
+              </span>
+            ) : (
+              <button
+                onClick={async () => {
+                  const perm = await requestBrowserPermission();
+                  setBrowserPerm(perm);
+                  if (perm === "granted") patch({ notif_browserEnabled: true });
+                }}
+                className="text-sm px-4 py-1.5 rounded-lg font-medium"
+                style={{ backgroundColor: "var(--accent-blue)", color: "#fff" }}
+              >
+                Enable
+              </button>
+            )}
+          </SettingRow>
+          {browserPerm === "granted" && (
+            <SettingRow label="Send browser notifications" hint="When enabled, events below will also appear as system pop-ups">
+              <Toggle value={settings.notif_browserEnabled} onChange={(v) => patch({ notif_browserEnabled: v })} />
+            </SettingRow>
+          )}
+
+          <SectionHeader>In-App Alerts</SectionHeader>
+          <SettingRow
+            label="Subscription Reminders"
+            hint="Alert when a recurring subscription receipt is overdue for upload"
+          >
+            <Toggle value={settings.notif_subscriptionReminders} onChange={(v) => patch({ notif_subscriptionReminders: v })} />
+          </SettingRow>
+          <SettingRow
+            label="Duplicate Warnings"
+            hint="Flag receipts that look like duplicates (same vendor, total, and date range)"
+          >
+            <Toggle value={settings.notif_duplicateWarnings} onChange={(v) => patch({ notif_duplicateWarnings: v })} />
+          </SettingRow>
+          <SettingRow
+            label="Incomplete Receipt Warnings"
+            hint="Warn about receipts with no vendor, total, or date filled in"
+          >
+            <Toggle value={settings.notif_incompleteReceipts} onChange={(v) => patch({ notif_incompleteReceipts: v })} />
+          </SettingRow>
+        </div>
+      )}
+
       {/* Save button (bottom) */}
       <div className="flex justify-end pt-2">
         <button onClick={handleSave}
@@ -505,6 +587,96 @@ export default function SettingsPage() {
           style={{ backgroundColor: saved ? "#10b981" : "var(--accent-blue)", color: "#fff", transition: "background-color 0.3s" }}>
           {saved ? "Saved ✓" : "Save Changes"}
         </button>
+      </div>
+
+      {/* Danger Zone */}
+      <div style={{ borderRadius: "1rem", border: "1px solid rgba(239,68,68,0.25)", overflow: "hidden", marginTop: 8 }}>
+        <div style={{ padding: "0.875rem 1.25rem", backgroundColor: "rgba(239,68,68,0.06)", borderBottom: "1px solid rgba(239,68,68,0.15)" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#f87171", letterSpacing: "0.05em", textTransform: "uppercase" }}>Danger Zone</span>
+        </div>
+
+        <div style={{ padding: "1.25rem" }}>
+          {clearStep === "idle" && (
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>Clear all data</div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3 }}>
+                  Permanently delete all receipts, invoices, income, mileage, and settings.
+                </div>
+              </div>
+              <button
+                onClick={() => setClearStep("warn")}
+                style={{ flexShrink: 0, padding: "0.5rem 1rem", borderRadius: "0.75rem", border: "1px solid rgba(239,68,68,0.4)", backgroundColor: "rgba(239,68,68,0.08)", color: "#f87171", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+                Clear data
+              </button>
+            </div>
+          )}
+
+          {clearStep === "warn" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
+              <div style={{ padding: "0.875rem", borderRadius: "0.75rem", backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#f87171", marginBottom: 6 }}>This cannot be undone.</div>
+                <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                  All your receipts, invoices, income entries, mileage trips, shareholder loan records, and settings will be <strong style={{ color: "var(--text-primary)" }}>permanently deleted</strong>. There is no recovery.
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                <button onClick={() => setClearStep("idle")} style={{ padding: "0.5rem 1rem", borderRadius: "0.75rem", border: "1px solid var(--border)", backgroundColor: "transparent", color: "var(--text-secondary)", fontSize: 13, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button onClick={() => setClearStep("type")} style={{ padding: "0.5rem 1rem", borderRadius: "0.75rem", border: "none", backgroundColor: "#ef4444", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  I understand, continue
+                </button>
+              </div>
+            </div>
+          )}
+
+          {clearStep === "type" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                Type <strong style={{ color: "var(--text-primary)", fontFamily: "monospace" }}>DELETE</strong> to confirm you want to erase everything.
+              </div>
+              <input
+                type="text"
+                value={clearInput}
+                onChange={e => setClearInput(e.target.value)}
+                placeholder="Type DELETE"
+                autoFocus
+                style={{ padding: "0.6rem 0.875rem", borderRadius: "0.75rem", border: `1px solid ${clearInput === "DELETE" ? "rgba(239,68,68,0.6)" : "var(--border)"}`, backgroundColor: "var(--bg-elevated)", color: "var(--text-primary)", fontSize: 14, outline: "none", fontFamily: "monospace" }}
+              />
+              <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                <button onClick={() => { setClearStep("idle"); setClearInput(""); }} style={{ padding: "0.5rem 1rem", borderRadius: "0.75rem", border: "1px solid var(--border)", backgroundColor: "transparent", color: "var(--text-secondary)", fontSize: 13, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => clearInput === "DELETE" && setClearStep("confirm")}
+                  disabled={clearInput !== "DELETE"}
+                  style={{ padding: "0.5rem 1rem", borderRadius: "0.75rem", border: "none", backgroundColor: clearInput === "DELETE" ? "#ef4444" : "rgba(239,68,68,0.2)", color: clearInput === "DELETE" ? "#fff" : "rgba(255,255,255,0.3)", fontSize: 13, fontWeight: 600, cursor: clearInput === "DELETE" ? "pointer" : "not-allowed" }}>
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+
+          {clearStep === "confirm" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
+              <div style={{ padding: "0.875rem", borderRadius: "0.75rem", backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", fontSize: 13, color: "#fca5a5", textAlign: "center", fontWeight: 600 }}>
+                Last chance. Once you click below, everything is gone forever.
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                <button onClick={() => { setClearStep("idle"); setClearInput(""); }} style={{ padding: "0.5rem 1rem", borderRadius: "0.75rem", border: "1px solid var(--border)", backgroundColor: "transparent", color: "var(--text-secondary)", fontSize: 13, cursor: "pointer" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={handleClearData}
+                  disabled={clearing}
+                  style={{ padding: "0.5rem 1.25rem", borderRadius: "0.75rem", border: "none", backgroundColor: "#dc2626", color: "#fff", fontSize: 13, fontWeight: 700, cursor: clearing ? "not-allowed" : "pointer", opacity: clearing ? 0.7 : 1 }}>
+                  {clearing ? "Deleting…" : "Permanently delete all data"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
     </div>

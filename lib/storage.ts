@@ -40,8 +40,36 @@ export type ReceiptForm = {
   notes: string;
   shareholder_loan: boolean;
   recurring: boolean;
-  recurringInterval: "monthly" | "yearly" | "";
+  recurringInterval: string; // "monthly"|"yearly" legacy, or "Nd"|"Nw"|"Nm"|"Ny" custom
 };
+
+// Convert an interval string to approximate days (for due-date calculation)
+export function parseIntervalDays(s: string): number {
+  if (!s) return 0;
+  if (s === "monthly") return 30;
+  if (s === "yearly")  return 365;
+  const m = s.match(/^(\d+)([dwmy])$/);
+  if (!m) return 0;
+  const n = parseInt(m[1]);
+  if (m[2] === "d") return n;
+  if (m[2] === "w") return n * 7;
+  if (m[2] === "m") return n * 30;
+  if (m[2] === "y") return n * 365;
+  return 0;
+}
+
+// Human-readable label for an interval string
+export function intervalLabel(s: string): string {
+  if (!s)              return "";
+  if (s === "monthly") return "Monthly";
+  if (s === "yearly")  return "Yearly";
+  const m = s.match(/^(\d+)([dwmy])$/);
+  if (!m) return s;
+  const n = parseInt(m[1]);
+  const units: Record<string, string> = { d: "day", w: "week", m: "month", y: "year" };
+  const u = units[m[2]] ?? "";
+  return `Every ${n} ${u}${n !== 1 ? "s" : ""}`;
+}
 
 export const EMPTY_FORM: ReceiptForm = {
   vendor: "",
@@ -147,12 +175,22 @@ function readJSON<T>(key: string, fallback: T): T {
   catch { return fallback; }
 }
 
+// Fire-and-forget: mirror a localStorage write to the server so data persists per user account.
+function syncKey(key: string, value: unknown): void {
+  fetch("/api/userdata", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value }),
+  }).catch(() => {});
+}
+
 export function getPending(): PendingReceipt[] {
   return readJSON<PendingReceipt[]>(PENDING_KEY, []);
 }
 
 export function setPending(queue: PendingReceipt[]): void {
   localStorage.setItem(PENDING_KEY, JSON.stringify(queue));
+  syncKey(PENDING_KEY, queue);
 }
 
 export function clearPending(): void {
@@ -176,16 +214,19 @@ export function addSaved(receipt: SavedReceipt): void {
   if (isDup) return;
   all.unshift(receipt);
   localStorage.setItem(SAVED_KEY, JSON.stringify(all));
+  syncKey(SAVED_KEY, all);
 }
 
 export function deleteSaved(id: string): void {
   const all = getSaved().filter((r) => r.id !== id);
   localStorage.setItem(SAVED_KEY, JSON.stringify(all));
+  syncKey(SAVED_KEY, all);
 }
 
 export function updateSaved(id: string, patch: Partial<SavedReceipt>): void {
   const all = getSaved().map((r) => r.id === id ? { ...r, ...patch } : r);
   localStorage.setItem(SAVED_KEY, JSON.stringify(all));
+  syncKey(SAVED_KEY, all);
 }
 
 const DISMISSED_KEY = "dismissedNotifs";
@@ -200,6 +241,7 @@ export function dismissNotif(key: string): void {
   if (!arr.includes(key)) {
     arr.push(key);
     localStorage.setItem(DISMISSED_KEY, JSON.stringify(arr));
+    syncKey(DISMISSED_KEY, arr);
   }
 }
 
@@ -228,16 +270,19 @@ export function addIncome(entry: IncomeEntry): void {
   const all = getIncome();
   all.unshift(entry);
   localStorage.setItem(INCOME_KEY, JSON.stringify(all));
+  syncKey(INCOME_KEY, all);
 }
 
 export function updateIncome(id: string, patch: Partial<IncomeEntry>): void {
   const all = getIncome().map((e) => e.id === id ? { ...e, ...patch } : e);
   localStorage.setItem(INCOME_KEY, JSON.stringify(all));
+  syncKey(INCOME_KEY, all);
 }
 
 export function deleteIncome(id: string): void {
   const all = getIncome().filter((e) => e.id !== id);
   localStorage.setItem(INCOME_KEY, JSON.stringify(all));
+  syncKey(INCOME_KEY, all);
 }
 
 // ── Mileage trips ──────────────────────────────────────────────────────────────
@@ -280,11 +325,13 @@ export function addMileage(trip: MileageTrip): void {
   const all = getMileage();
   all.unshift(trip);
   localStorage.setItem(MILEAGE_KEY, JSON.stringify(all));
+  syncKey(MILEAGE_KEY, all);
 }
 
 export function deleteMileage(id: string): void {
   const all = getMileage().filter((t) => t.id !== id);
   localStorage.setItem(MILEAGE_KEY, JSON.stringify(all));
+  syncKey(MILEAGE_KEY, all);
 }
 
 // ── CRA mileage reimbursement rate (2024) ─────────────────────────────────────
@@ -316,11 +363,13 @@ export function addLoanEntry(e: LoanEntry): void {
   const all = getLoanEntries();
   all.unshift(e);
   localStorage.setItem(LOAN_KEY, JSON.stringify(all));
+  syncKey(LOAN_KEY, all);
 }
 
 export function deleteLoanEntry(id: string): void {
   const all = getLoanEntries().filter((e) => e.id !== id);
   localStorage.setItem(LOAN_KEY, JSON.stringify(all));
+  syncKey(LOAN_KEY, all);
 }
 
 // ── Next invoice number helper ─────────────────────────────────────────────────
@@ -348,6 +397,7 @@ export function getTaxRates(): TaxRates {
 
 export function saveTaxRates(r: TaxRates): void {
   localStorage.setItem(TAX_RATES_KEY, JSON.stringify(r));
+  syncKey(TAX_RATES_KEY, r);
 }
 
 // ── Bulk import (migration) ────────────────────────────────────────────────────
@@ -360,7 +410,9 @@ export function bulkAddSaved(rows: SavedReceipt[]): number {
              e.total === r.total && e.date === r.date
     )
   );
-  localStorage.setItem(SAVED_KEY, JSON.stringify([...toAdd, ...existing]));
+  const merged = [...toAdd, ...existing];
+  localStorage.setItem(SAVED_KEY, JSON.stringify(merged));
+  syncKey(SAVED_KEY, merged);
   return toAdd.length;
 }
 
@@ -371,7 +423,9 @@ export function bulkAddIncome(rows: IncomeEntry[]): number {
       (e) => e.invoiceNo && r.invoiceNo && e.invoiceNo === r.invoiceNo && e.client === r.client
     )
   );
-  localStorage.setItem(INCOME_KEY, JSON.stringify([...toAdd, ...existing]));
+  const merged = [...toAdd, ...existing];
+  localStorage.setItem(INCOME_KEY, JSON.stringify(merged));
+  syncKey(INCOME_KEY, merged);
   return toAdd.length;
 }
 
@@ -392,6 +446,7 @@ export function getOfficeLocation(): OfficeLocation | null {
 
 export function saveOfficeLocation(loc: OfficeLocation): void {
   localStorage.setItem(OFFICE_KEY, JSON.stringify(loc));
+  syncKey(OFFICE_KEY, loc);
 }
 
 // ── Annual odometer (for business-use % calculation) ──────────────────────────
@@ -412,6 +467,7 @@ export function saveOdometer(record: OdometerRecord): void {
   const all = getOdometers().filter((r) => r.year !== record.year);
   all.push(record);
   localStorage.setItem(ODOMETER_KEY, JSON.stringify(all));
+  syncKey(ODOMETER_KEY, all);
 }
 
 export function getOdometerForYear(year: number): OdometerRecord | undefined {
@@ -421,6 +477,7 @@ export function getOdometerForYear(year: number): OdometerRecord | undefined {
 export function updateMileage(id: string, patch: Partial<MileageTrip>): void {
   const all = getMileage().map((t) => t.id === id ? { ...t, ...patch } : t);
   localStorage.setItem(MILEAGE_KEY, JSON.stringify(all));
+  syncKey(MILEAGE_KEY, all);
 }
 
 export function bulkAddMileage(rows: MileageTrip[]): number {
@@ -430,7 +487,9 @@ export function bulkAddMileage(rows: MileageTrip[]): number {
       (e) => e.date === r.date && e.from === r.from && e.to === r.to && e.km === r.km
     )
   );
-  localStorage.setItem(MILEAGE_KEY, JSON.stringify([...toAdd, ...existing]));
+  const merged = [...toAdd, ...existing];
+  localStorage.setItem(MILEAGE_KEY, JSON.stringify(merged));
+  syncKey(MILEAGE_KEY, merged);
   return toAdd.length;
 }
 
@@ -442,7 +501,9 @@ export function bulkAddLoan(rows: LoanEntry[]): number {
              e.debit === r.debit && e.credit === r.credit
     )
   );
-  localStorage.setItem(LOAN_KEY, JSON.stringify([...toAdd, ...existing]));
+  const merged = [...toAdd, ...existing];
+  localStorage.setItem(LOAN_KEY, JSON.stringify(merged));
+  syncKey(LOAN_KEY, merged);
   return toAdd.length;
 }
 
@@ -501,16 +562,19 @@ export function addInvoice(inv: Invoice): void {
   const all = getInvoices();
   all.unshift(inv);
   localStorage.setItem(INVOICE_KEY, JSON.stringify(all));
+  syncKey(INVOICE_KEY, all);
 }
 
 export function updateInvoice(id: string, patch: Partial<Invoice>): void {
   const all = getInvoices().map((i) => i.id === id ? { ...i, ...patch } : i);
   localStorage.setItem(INVOICE_KEY, JSON.stringify(all));
+  syncKey(INVOICE_KEY, all);
 }
 
 export function deleteInvoice(id: string): void {
   const all = getInvoices().filter((i) => i.id !== id);
   localStorage.setItem(INVOICE_KEY, JSON.stringify(all));
+  syncKey(INVOICE_KEY, all);
 }
 
 export function getBusinessProfile(): BusinessProfile {
@@ -519,6 +583,7 @@ export function getBusinessProfile(): BusinessProfile {
 
 export function saveBusinessProfile(p: BusinessProfile): void {
   localStorage.setItem(BIZ_KEY, JSON.stringify(p));
+  syncKey(BIZ_KEY, p);
 }
 
 // ── Invoice Templates ──────────────────────────────────────────────────────────
@@ -547,11 +612,13 @@ export function saveTemplate(t: InvoiceTemplate): void {
   const all = getTemplates().filter(x => x.id !== t.id);
   all.unshift(t);
   localStorage.setItem(TEMPLATE_KEY, JSON.stringify(all));
+  syncKey(TEMPLATE_KEY, all);
 }
 
 export function deleteTemplate(id: string): void {
   const all = getTemplates().filter(t => t.id !== id);
   localStorage.setItem(TEMPLATE_KEY, JSON.stringify(all));
+  syncKey(TEMPLATE_KEY, all);
 }
 
 // ── Location Bias ──────────────────────────────────────────────────────────────
@@ -605,6 +672,12 @@ export type AppSettings = {
 
   // AI
   aiProMode: boolean;                       // allow AI agents to make direct changes to data
+
+  // Notifications
+  notif_subscriptionReminders: boolean;
+  notif_duplicateWarnings: boolean;
+  notif_incompleteReceipts: boolean;
+  notif_browserEnabled: boolean;
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -627,6 +700,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
   locationBias: DEFAULT_LOCATION_BIAS,
   aiProMode: false,
+  notif_subscriptionReminders: true,
+  notif_duplicateWarnings: true,
+  notif_incompleteReceipts: true,
+  notif_browserEnabled: false,
 };
 
 const SETTINGS_KEY = "corpoAppSettings";
@@ -638,6 +715,7 @@ export function getSettings(): AppSettings {
 
 export function saveSettings(s: AppSettings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  syncKey(SETTINGS_KEY, s);
 }
 
 export function patchSettings(patch: Partial<AppSettings>): void {

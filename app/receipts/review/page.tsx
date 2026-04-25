@@ -11,6 +11,7 @@ import {
   type ReceiptForm,
   type PendingReceipt,
 } from "@/lib/storage";
+import IntervalPicker from "@/components/IntervalPicker";
 
 type TabState = {
   pending: PendingReceipt;
@@ -428,25 +429,10 @@ export default function ReviewPage() {
                 </div>
 
                 {activeTab.form.recurring && (
-                  <div className="mt-2 flex gap-2">
-                    {(["monthly", "yearly"] as const).map((interval) => (
-                      <button
-                        key={interval}
-                        onClick={() => updateForm(activeId, "recurringInterval", interval)}
-                        className="flex-1 py-2 rounded-lg text-sm font-medium"
-                        style={{
-                          backgroundColor: activeTab.form.recurringInterval === interval
-                            ? "var(--accent-green)" : "var(--bg-elevated)",
-                          color: activeTab.form.recurringInterval === interval
-                            ? "#fff" : "var(--text-secondary)",
-                          border: `1px solid ${activeTab.form.recurringInterval === interval
-                            ? "var(--accent-green)" : "var(--border)"}`,
-                        }}
-                      >
-                        {interval.charAt(0).toUpperCase() + interval.slice(1)}
-                      </button>
-                    ))}
-                  </div>
+                  <IntervalPicker
+                    value={activeTab.form.recurringInterval || "1m"}
+                    onChange={(v) => updateForm(activeId, "recurringInterval", v)}
+                  />
                 )}
               </div>
             </div>
