@@ -5,6 +5,8 @@ import { GoogleAuth } from "google-auth-library";
 import { requireAuth } from "@/lib/api-auth";
 import { uploadLimit, getIP } from "@/lib/rate-limit";
 
+export const maxDuration = 60;
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -68,15 +70,9 @@ async function prepareFile(buffer: Buffer, mimeType: string, fileName: string): 
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
 
   if (mimeType === "application/pdf" || ext === "pdf") {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const { createCanvas } = await import("@napi-rs/canvas");
-    const pdf  = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-    const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 2.0 });
-    const canvas   = createCanvas(viewport.width, viewport.height);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await page.render({ canvasContext: canvas.getContext("2d") as any, viewport, canvas: canvas as any }).promise;
-    return { base64: canvas.toBuffer("image/jpeg").toString("base64"), mime: "image/jpeg" };
+    // Send PDF directly to Document AI — it supports PDF natively,
+    // avoiding @napi-rs/canvas which doesn't run on Vercel's serverless runtime.
+    return { base64: buffer.toString("base64"), mime: "application/pdf" };
   }
 
   const isHeic = ["image/heic","image/heif","image/heic-sequence","image/heif-sequence"].includes(mimeType)
@@ -145,6 +141,9 @@ export async function POST(req: NextRequest) {
       console.log("OCR via Document AI succeeded");
     } catch (e) {
       console.warn("Document AI failed, falling back to OpenAI vision:", e);
+      if (prepared.mime === "application/pdf") {
+        throw new Error("Document AI failed for this PDF and OpenAI vision does not support PDFs.");
+      }
       ocrText = await ocrViaOpenAI(prepared.base64, prepared.mime);
       ocrSource = "openai";
       console.log("OCR via OpenAI succeeded");
