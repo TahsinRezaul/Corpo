@@ -84,8 +84,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async signIn({ user, account }) {
       if (account && (account.provider === "google" || account.provider === "apple" || account.provider === "microsoft-entra-id")) {
         if (!user.email) return false;
-        const dbUser = upsertOAuthUser(user.email, user.name ?? user.email);
-        user.id = dbUser.id;
+        try {
+          const dbUser = upsertOAuthUser(user.email, user.name ?? user.email);
+          user.id = dbUser.id;
+        } catch {
+          // Vercel has a read-only filesystem — writes fail but login should still succeed
+        }
       }
       return true;
     },
