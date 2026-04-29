@@ -13,7 +13,7 @@ import ModuleLauncher, {
 import { getSaved, getIncome, getMileage } from "@/lib/storage";
 import CorpoMark from "@/components/CorpoMark";
 
-// ── Quick stats from localStorage ─────────────────────────────────────────────
+// ── Quick stats ────────────────────────────────────────────────────────────────
 
 type Stats = { receipts: number; expenses: number; income: number; mileage: number };
 
@@ -22,15 +22,14 @@ function parseMoney(s: string | number | undefined): number {
 }
 
 function readStats(): Stats {
-  const saved    = getSaved();
+  const saved = getSaved();
   const incomeEntries = getIncome();
-  const trips    = getMileage();
-
+  const trips = getMileage();
   return {
     receipts: saved.length,
     expenses: saved.reduce((s, r) => s + parseMoney(r.total), 0),
-    income:   incomeEntries.reduce((s, e) => s + parseMoney(e.amount), 0),
-    mileage:  trips.reduce((s, t) => s + (t.km || 0), 0),
+    income: incomeEntries.reduce((s, e) => s + parseMoney(e.amount), 0),
+    mileage: trips.reduce((s, t) => s + (t.km || 0), 0),
   };
 }
 
@@ -38,7 +37,10 @@ function fmt(n: number) {
   return n.toLocaleString("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
 }
 
-
+function buildContext(stats: Stats | null): string {
+  if (!stats) return "";
+  return `${stats.receipts} receipts, ${fmt(stats.expenses)} expenses logged, ${fmt(stats.income)} income, ${stats.mileage.toFixed(0)} km driven`;
+}
 
 // ── Search overlay ─────────────────────────────────────────────────────────────
 
@@ -110,120 +112,184 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── Agent input ────────────────────────────────────────────────────────────────
+// ── Assistant chat ─────────────────────────────────────────────────────────────
 
-type AgentMsg = { role: "user" | "agent"; text: string };
+type Msg = { role: "user" | "agent"; text: string };
 
-const ROUTES: { keywords: string[]; path?: string; reply: string }[] = [
-  { keywords: ["migrate", "import", "spreadsheet", "excel", "csv", "xero", "quickbooks"], path: "/migrate", reply: "Taking you to the data import wizard…" },
-  { keywords: ["receipt", "scan", "upload", "expense", "bill"], path: "/receipts", reply: "Taking you to Receipts…" },
-  { keywords: ["invoice"], path: "/invoices", reply: "Taking you to Invoices…" },
-  { keywords: ["mileage", "drive", "km", "trip"], path: "/mileage", reply: "Taking you to Mileage Log…" },
-  { keywords: ["income", "revenue", "profit", "p&l", "earnings"], path: "/income", reply: "Taking you to Income & P&L…" },
-  { keywords: ["hst", "tax return", "gst"], path: "/hst", reply: "Taking you to HST Report…" },
-  { keywords: ["money", "cash", "management"], path: "/money", reply: "Taking you to Money Mgmt…" },
-  { keywords: ["loan", "shareholder"], path: "/loan", reply: "Taking you to Shareholder Loan…" },
-  { keywords: ["accountant", "report", "download", "pdf", "package"], path: "/accountant", reply: "Taking you to Accountant Reports…" },
-  { keywords: ["tax", "planner", "estimate"], path: "/tax", reply: "Taking you to Tax Planner…" },
-  { keywords: ["setting", "profile", "theme"], path: "/settings", reply: "Taking you to Settings…" },
-  { keywords: ["help", "what", "how", "can you", "do you"], reply: "I can navigate to any module — just say where you want to go." },
+const SUGGESTIONS = [
+  { label: "New invoice", prompt: "Make a new invoice for this month" },
+  { label: "Scan receipt", prompt: "I want to scan a receipt" },
+  { label: "Log mileage", prompt: "Log a mileage trip" },
+  { label: "View expenses", prompt: "Show me my expenses" },
+  { label: "Tax estimate", prompt: "Open the tax planner" },
+  { label: "Export for accountant", prompt: "Generate accountant report" },
 ];
 
-function AgentInput({ isDark }: { isDark: boolean }) {
+function AssistantChat({ isDark, stats }: { isDark: boolean; stats: Stats | null }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [messages, setMessages] = useState<AgentMsg[]>([]);
-  const [thinking, setThinking] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const chatRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [messages]);
+  useEffect(() => {
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+  }, [messages]);
 
-  function handleSubmit() {
-    const q = query.trim();
-    if (!q) return;
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || loading) return;
     setQuery("");
     setMessages(m => [...m, { role: "user", text: q }]);
-    setThinking(true);
-    setTimeout(() => {
-      const lower = q.toLowerCase();
-      const match = ROUTES.find(r => r.keywords.some(k => lower.includes(k)));
-      setThinking(false);
-      const reply = match?.reply ?? "I can navigate to any module — just tell me where you want to go.";
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: q, context: buildContext(stats) }),
+      });
+      const data = await res.json();
+      const reply = data.message ?? "Done.";
       setMessages(m => [...m, { role: "agent", text: reply }]);
-      if (match?.path) setTimeout(() => router.push(match.path!), 550);
-    }, 480);
+      if (data.action === "navigate" && data.path) {
+        setTimeout(() => router.push(data.path), 600);
+      }
+    } catch {
+      setMessages(m => [...m, { role: "agent", text: "Something went wrong — try again." }]);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function onKey(e: KeyboardEvent<HTMLInputElement>) { if (e.key === "Enter") handleSubmit(); }
+  function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(query); }
+  }
 
-  const userBg    = isDark ? "rgba(59,130,246,0.18)"  : "rgba(37,99,235,0.1)";
-  const userColor = isDark ? "#93c5fd"                 : "#1d4ed8";
-  const agentBg   = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)";
-  const agentColor= isDark ? "rgba(255,255,255,0.65)" : "#374151";
-  const inputBg   = isDark ? "rgba(255,255,255,0.06)" : "#ffffff";
-  const inputBorder= isDark ? "rgba(255,255,255,0.1)" : "#d1d5db";
-  const inputColor = isDark ? "#fff"                  : "#0f1523";
-  const phColor   = isDark ? "rgba(255,255,255,0.28)" : "#9ca3af";
+  // Auto-resize textarea
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setQuery(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
+  }
+
+  const hasMessages = messages.length > 0;
+
+  const borderColor   = isDark ? "rgba(255,255,255,0.1)"  : "#e5e7eb";
+  const inputBg       = isDark ? "rgba(255,255,255,0.05)" : "#ffffff";
+  const userBg        = isDark ? "rgba(59,130,246,0.2)"   : "rgba(37,99,235,0.08)";
+  const userColor     = isDark ? "#93c5fd"                 : "#1d4ed8";
+  const agentColor    = isDark ? "rgba(255,255,255,0.75)" : "#374151";
+  const phColor       = isDark ? "rgba(255,255,255,0.3)"  : "#9ca3af";
+  const dotColor      = isDark ? "rgba(255,255,255,0.4)"  : "#9ca3af";
 
   return (
-    <div className="w-full flex flex-col gap-3">
-      {messages.length > 0 && (
-        <div ref={listRef} className="flex flex-col gap-2 max-h-40 overflow-y-auto px-1" style={{ scrollbarWidth: "none" }}>
+    <div className="w-full flex flex-col" style={{ gap: hasMessages ? 12 : 20 }}>
+
+      {/* Chat history */}
+      {hasMessages && (
+        <div
+          ref={chatRef}
+          className="flex flex-col gap-3 overflow-y-auto px-1"
+          style={{ maxHeight: 320, scrollbarWidth: "none" }}
+        >
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <span
-                className="text-sm px-4 py-2 rounded-2xl max-w-xs"
+              <div
+                className="text-sm px-4 py-2.5 rounded-2xl max-w-sm"
                 style={{
-                  backgroundColor: m.role === "user" ? userBg : agentBg,
+                  backgroundColor: m.role === "user" ? userBg : "transparent",
                   color: m.role === "user" ? userColor : agentColor,
-                  border: `1px solid ${m.role === "user" ? "rgba(59,130,246,0.2)" : inputBorder}`,
+                  border: m.role === "user" ? `1px solid rgba(59,130,246,0.2)` : "none",
+                  lineHeight: 1.5,
                 }}
               >
                 {m.text}
-              </span>
+              </div>
             </div>
           ))}
-          {thinking && (
-            <div className="flex justify-start">
-              <span className="text-sm px-4 py-2.5 rounded-2xl flex items-center gap-1" style={{ backgroundColor: agentBg, border: `1px solid ${inputBorder}` }}>
+          {loading && (
+            <div className="flex justify-start pl-1">
+              <div className="flex items-center gap-1 px-4 py-3 rounded-2xl" style={{ backgroundColor: inputBg, border: `1px solid ${borderColor}` }}>
                 {[0, 1, 2].map(i => (
-                  <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", backgroundColor: phColor, display: "inline-block", animation: `bounce 1s ${i * 0.15}s infinite` }} />
+                  <span
+                    key={i}
+                    style={{
+                      width: 5, height: 5, borderRadius: "50%",
+                      backgroundColor: dotColor, display: "inline-block",
+                      animation: `bounce 1s ${i * 0.15}s infinite`,
+                    }}
+                  />
                 ))}
-              </span>
+              </div>
             </div>
           )}
         </div>
       )}
+
+      {/* Input box */}
       <div
-        className="flex items-center gap-3 rounded-2xl px-4 py-3"
-        style={{ backgroundColor: inputBg, border: `1px solid ${inputBorder}` }}
+        className="w-full rounded-2xl overflow-hidden"
+        style={{
+          backgroundColor: inputBg,
+          border: `1px solid ${borderColor}`,
+          boxShadow: isDark ? "0 4px 24px rgba(0,0,0,0.3)" : "0 4px 24px rgba(0,0,0,0.06)",
+        }}
       >
-        <input
+        <textarea
           ref={inputRef}
           value={query}
-          onChange={e => setQuery(e.target.value)}
+          onChange={handleChange}
           onKeyDown={onKey}
-          placeholder="Ask me anything or go somewhere…"
-          className="flex-1 bg-transparent outline-none text-sm"
-          style={{ color: inputColor }}
+          placeholder="Tell me what to do — e.g. make an invoice for June, scan a receipt, log a trip…"
+          rows={2}
+          className="w-full bg-transparent outline-none resize-none px-5 pt-4 pb-2 text-sm leading-relaxed"
+          style={{ color: "var(--text-primary)", minHeight: 60 }}
         />
-        <style>{`input::placeholder { color: ${phColor}; }`}</style>
-        <button
-          onClick={handleSubmit}
-          disabled={!query.trim()}
-          className="flex items-center justify-center rounded-xl"
-          style={{
-            width: 32, height: 32,
-            backgroundColor: query.trim() ? (isDark ? "rgba(59,130,246,0.3)" : "rgba(37,99,235,0.12)") : "transparent",
-            opacity: query.trim() ? 1 : 0.35,
-            flexShrink: 0,
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ color: isDark ? "#60a5fa" : "#2563eb" }}>
-            <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
-          </svg>
-        </button>
+        <style>{`textarea::placeholder { color: ${phColor}; }`}</style>
+        <div className="flex items-center justify-between px-4 pb-3 pt-1">
+          <span className="text-xs" style={{ color: phColor }}>Enter to send · Shift+Enter for new line</span>
+          <button
+            onClick={() => send(query)}
+            disabled={!query.trim() || loading}
+            className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-xl transition-all"
+            style={{
+              backgroundColor: query.trim() && !loading
+                ? (isDark ? "rgba(59,130,246,0.25)" : "rgba(37,99,235,0.1)")
+                : "transparent",
+              color: isDark ? "#60a5fa" : "#2563eb",
+              opacity: query.trim() && !loading ? 1 : 0.3,
+              border: `1px solid ${query.trim() && !loading ? (isDark ? "rgba(59,130,246,0.3)" : "rgba(37,99,235,0.2)") : "transparent"}`,
+            }}
+          >
+            Send
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Suggestion chips */}
+      <div className="flex flex-wrap gap-2">
+        {SUGGESTIONS.map(s => (
+          <button
+            key={s.label}
+            onClick={() => send(s.prompt)}
+            disabled={loading}
+            className="text-xs px-3 py-1.5 rounded-full transition-all"
+            style={{
+              backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+              border: `1px solid ${borderColor}`,
+              color: "var(--text-secondary)",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = isDark ? "rgba(59,130,246,0.4)" : "rgba(37,99,235,0.3)")}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = borderColor)}
+          >
+            {s.label}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -231,16 +297,14 @@ function AgentInput({ isDark }: { isDark: boolean }) {
 
 // ── Stats strip ────────────────────────────────────────────────────────────────
 
-function StatsStrip({ isDark }: { isDark: boolean }) {
-  const [stats, setStats] = useState<Stats | null>(null);
-  useEffect(() => { setStats(readStats()); }, []);
+function StatsStrip({ isDark, stats }: { isDark: boolean; stats: Stats | null }) {
   if (!stats) return null;
 
   const items = [
-    { label: "Receipts", value: String(stats.receipts), unit: "files" },
-    { label: "Expenses",  value: fmt(stats.expenses),   unit: "" },
-    { label: "Income",    value: fmt(stats.income),     unit: "" },
-    { label: "Mileage",   value: stats.mileage.toFixed(0) + " km", unit: "" },
+    { label: "Receipts",  value: String(stats.receipts),             unit: "filed" },
+    { label: "Expenses",  value: fmt(stats.expenses),                unit: "" },
+    { label: "Income",    value: fmt(stats.income),                   unit: "" },
+    { label: "Mileage",   value: stats.mileage.toFixed(0) + " km",   unit: "" },
   ];
 
   const border = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)";
@@ -248,23 +312,23 @@ function StatsStrip({ isDark }: { isDark: boolean }) {
   return (
     <div
       className="grid grid-cols-4 rounded-2xl overflow-hidden w-full"
-      style={{ maxWidth: 680, border: `1px solid ${border}`, backgroundColor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)" }}
+      style={{ border: `1px solid ${border}`, backgroundColor: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)" }}
     >
       {items.map((item, idx) => (
         <div
           key={item.label}
-          className="flex flex-col items-center py-5 px-3"
+          className="flex flex-col items-center py-4 px-2"
           style={{ borderRight: idx < items.length - 1 ? `1px solid ${border}` : "none" }}
         >
-          <span className="text-xs font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>{item.label}</span>
-          <span style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1 }}>{item.value}</span>
+          <span className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{item.label}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1 }}>{item.value}</span>
         </div>
       ))}
     </div>
   );
 }
 
-// ── Home tile grid (inline edit capable) ──────────────────────────────────────
+// ── Module tiles ───────────────────────────────────────────────────────────────
 
 function HomeTiles({
   isDark, editMode, onEdit, onDoneEdit, onAllModules,
@@ -299,13 +363,11 @@ function HomeTiles({
 
   if (!loaded) return null;
 
-  // ── Persist ─────────────────────────────────────────────────
   function persist(m: ModuleEntry[], f: Folder[], g: GridEntry[]) {
     setModules(m); setFolders(f); setGrid(g);
     saveAll(m, f, g);
   }
 
-  // ── Derived: ordered visible modules (top-level grid only) ──
   const visibleEntries = grid
     .map((entry, gIdx) => ({ entry, gIdx }))
     .filter(({ entry }) => {
@@ -318,7 +380,6 @@ function HomeTiles({
   const editingMod    = editingTileId   ? modules.find(m => m.id === editingTileId)   ?? null : null;
   const iconPickerMod = iconPickerForId ? modules.find(m => m.id === iconPickerForId) ?? null : null;
 
-  // ── Operations ───────────────────────────────────────────────
   function hideGridEntry(gIdx: number) {
     const entry = grid[gIdx];
     if (!entry || entry.type !== "module") return;
@@ -362,22 +423,14 @@ function HomeTiles({
 
   return (
     <>
-      <div className="w-full max-w-3xl flex flex-col gap-3">
-
-        {/* ── Section header ──────────────────────────────── */}
+      <div className="w-full flex flex-col gap-3">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2.5">
             <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
               {editMode ? "Edit Modules" : "Modules"}
             </span>
             {!editMode && (
-              <button
-                onClick={onAllModules}
-                className="text-xs"
-                style={{ color: "var(--text-secondary)", opacity: 0.5 }}
-              >
-                All →
-              </button>
+              <button onClick={onAllModules} className="text-xs" style={{ color: "var(--text-secondary)", opacity: 0.5 }}>All →</button>
             )}
           </div>
           <button
@@ -393,14 +446,12 @@ function HomeTiles({
           </button>
         </div>
 
-        {/* ── Hint text in edit mode ───────────────────────── */}
         {editMode && (
           <p className="text-xs text-center" style={{ color: "var(--text-secondary)", opacity: 0.6 }}>
             Drag to reorder · tap tile to rename / change icon · × to hide
           </p>
         )}
 
-        {/* ── Tile grid ────────────────────────────────────── */}
         <div
           className="grid gap-3"
           style={{ gridTemplateColumns: "repeat(4, 1fr)" }}
@@ -416,10 +467,8 @@ function HomeTiles({
                 key={entry.id}
                 className="relative"
                 style={{
-                  animation: editMode
-                    ? `jiggle 0.18s ${(visIdx * 73) % 350}ms ease-in-out infinite ${visIdx % 2 === 0 ? "alternate" : "alternate-reverse"}`
-                    : "none",
-                  opacity:    isDragging ? 0.35 : 1,
+                  animation: editMode ? `jiggle 0.18s ${(visIdx * 73) % 350}ms ease-in-out infinite ${visIdx % 2 === 0 ? "alternate" : "alternate-reverse"}` : "none",
+                  opacity: isDragging ? 0.35 : 1,
                   transition: "opacity 0.12s",
                 }}
                 draggable={editMode}
@@ -433,7 +482,6 @@ function HomeTiles({
                 } : undefined}
                 onDragEnd={editMode ? () => { dragFromIdx.current = null; setDraggingIdx(null); } : undefined}
               >
-                {/* × hide badge */}
                 {editMode && (
                   <button
                     onClick={e => { e.stopPropagation(); hideGridEntry(gIdx); }}
@@ -446,22 +494,18 @@ function HomeTiles({
                     </svg>
                   </button>
                 )}
-
                 <button
-                  onClick={() => {
-                    if (editMode) { setEditingTileId(mod.id); return; }
-                    router.push(mod.href);
-                  }}
+                  onClick={() => { if (editMode) { setEditingTileId(mod.id); return; } router.push(mod.href); }}
                   className="flex flex-col items-center justify-center gap-3 rounded-2xl pressable w-full"
                   style={{
-                    height: 110,
-                    backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)",
+                    height: 90,
+                    backgroundColor: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)",
                     border: "1px solid var(--border)",
                     color: "var(--text-secondary)",
                     cursor: editMode ? "default" : "pointer",
                   }}
                 >
-                  <TileIcon mod={mod} size={28} />
+                  <TileIcon mod={mod} size={24} />
                   <span className="text-xs font-medium leading-tight text-center px-2" style={{ color: "inherit" }}>
                     {mod.label}
                   </span>
@@ -470,14 +514,13 @@ function HomeTiles({
             );
           })}
 
-          {/* + New tile */}
           {editMode && (
             <button
               onClick={addCustomModule}
               className="flex flex-col items-center justify-center gap-2 rounded-2xl pressable"
-              style={{ height: 110, border: "1.5px dashed var(--border)", color: "var(--text-secondary)", backgroundColor: "transparent" }}
+              style={{ height: 90, border: "1.5px dashed var(--border)", color: "var(--text-secondary)", backgroundColor: "transparent" }}
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
               <span className="text-xs font-medium">New</span>
@@ -485,9 +528,8 @@ function HomeTiles({
           )}
         </div>
 
-        {/* ── Hidden modules (restore / delete) ───────────── */}
         {editMode && hiddenModules.length > 0 && (
-          <div className="mt-4">
+          <div className="mt-3">
             <p className="text-xs mb-3 px-1" style={{ color: "var(--text-secondary)" }}>
               Hidden — tap + to restore{hiddenModules.some(m => m.custom) ? " · 🗑 to delete permanently" : ""}
             </p>
@@ -515,8 +557,8 @@ function HomeTiles({
                       </svg>
                     </button>
                   )}
-                  <div className="flex flex-col items-center justify-center gap-2.5 rounded-2xl w-full" style={{ height: 110, backgroundColor: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
-                    <TileIcon mod={mod} size={28} />
+                  <div className="flex flex-col items-center justify-center gap-2.5 rounded-2xl w-full" style={{ height: 90, backgroundColor: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+                    <TileIcon mod={mod} size={24} />
                     <span className="text-xs font-medium text-center px-2" style={{ lineHeight: 1.3 }}>{mod.label}</span>
                   </div>
                 </div>
@@ -526,7 +568,6 @@ function HomeTiles({
         )}
       </div>
 
-      {/* ── Inline edit sheets ────────────────────────────── */}
       {editingMod && !iconPickerForId && (
         <TileEditSheet
           mod={editingMod}
@@ -551,16 +592,19 @@ function HomeTiles({
 export default function HomePage() {
   const { theme, toggle } = useTheme();
   const isDark = theme === "dark";
-  const [searchOpen,    setSearchOpen]    = useState(false);
-  const [launcherOpen,  setLauncherOpen]  = useState(false);
-  const [editMode,      setEditMode]      = useState(false);
+  const [searchOpen,   setSearchOpen]   = useState(false);
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [editMode,     setEditMode]     = useState(false);
+  const [stats,        setStats]        = useState<Stats | null>(null);
   const router = useRouter();
 
-  // Redirect mobile users straight to the camera
   useEffect(() => {
+    setStats(readStats());
     const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
     if (isMobile) router.replace("/receipts/camera");
   }, [router]);
+
+  const dividerColor = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
 
   return (
     <div
@@ -568,44 +612,33 @@ export default function HomePage() {
       style={{ marginTop: "-52px", minHeight: "100vh", backgroundColor: "var(--bg-base)" }}
     >
       {searchOpen && <SearchOverlay onClose={() => setSearchOpen(false)} />}
-
-      {/* ModuleLauncher — browse mode (opened from "All →" link) */}
       <ModuleLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} />
 
-      {/* ── Top bar ────────────────────────────────────────────────── */}
+      {/* Top bar */}
       <header
         className="flex items-center justify-between px-5 py-3"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
         <div className="flex items-center gap-2.5">
           <CorpoMark size={24} isDark={isDark} />
-          <span style={{
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: "0.22em",
-            color: "var(--text-primary)",
-          }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.22em", color: "var(--text-primary)" }}>
             CORPO
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Search */}
           <button
             onClick={() => setSearchOpen(true)}
             className="flex items-center justify-center rounded-xl"
             style={{ width: 34, height: 34, backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-            aria-label="Search"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
           </button>
-          {/* Settings */}
           <Link
             href="/settings"
             className="flex items-center justify-center rounded-xl"
             style={{ width: 34, height: 34, backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-            aria-label="Settings"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3"/>
@@ -617,13 +650,31 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* ── Main ───────────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col items-center px-5 py-7 gap-6">
+      {/* Main */}
+      <main className="flex-1 flex flex-col items-center px-5 py-8 gap-8 w-full max-w-2xl mx-auto">
 
-        {/* Stats — first thing you see */}
-        <StatsStrip isDark={isDark} />
+        {/* Greeting */}
+        <div className="w-full">
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
+            What do you need?
+          </h1>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+            Ask me anything — I&apos;ll take you there or do it for you.
+          </p>
+        </div>
 
-        {/* Module tiles — inline edit */}
+        {/* Assistant — hero element */}
+        <div className="w-full">
+          <AssistantChat isDark={isDark} stats={stats} />
+        </div>
+
+        {/* Divider */}
+        <div className="w-full" style={{ height: 1, backgroundColor: dividerColor }} />
+
+        {/* Stats */}
+        <StatsStrip isDark={isDark} stats={stats} />
+
+        {/* Module tiles */}
         <HomeTiles
           isDark={isDark}
           editMode={editMode}
@@ -631,11 +682,6 @@ export default function HomePage() {
           onDoneEdit={() => setEditMode(false)}
           onAllModules={() => setLauncherOpen(true)}
         />
-
-        {/* Agent input */}
-        <div className="w-full max-w-lg">
-          <AgentInput isDark={isDark} />
-        </div>
       </main>
     </div>
   );
