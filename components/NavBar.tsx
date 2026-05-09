@@ -9,6 +9,11 @@ import { useBackgroundTasks } from "@/contexts/BackgroundTasksContext";
 
 // ── Theme hook ─────────────────────────────────────────────────────────────────
 
+function applyTheme(t: "dark" | "light") {
+  if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+  else document.documentElement.removeAttribute("data-theme");
+}
+
 export function useTheme() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
 
@@ -16,8 +21,14 @@ export function useTheme() {
     const stored = localStorage.getItem("corpo-theme") as "dark" | "light" | null;
     const resolved = stored === "light" ? "light" : "dark";
     setTheme(resolved);
-    if (resolved === "light") document.documentElement.setAttribute("data-theme", "light");
-    else document.documentElement.removeAttribute("data-theme");
+    applyTheme(resolved);
+    function onThemeChange() {
+      const t = localStorage.getItem("corpo-theme") === "light" ? "light" : "dark";
+      setTheme(t);
+      applyTheme(t);
+    }
+    window.addEventListener("corpo-theme-changed", onThemeChange);
+    return () => window.removeEventListener("corpo-theme-changed", onThemeChange);
   }, []);
 
   function toggle() {
@@ -25,8 +36,7 @@ export function useTheme() {
     setTheme(next);
     localStorage.setItem("corpo-theme", next);
     fetch("/api/userdata", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "corpo-theme", value: next }) }).catch(() => {});
-    if (next === "light") document.documentElement.setAttribute("data-theme", "light");
-    else document.documentElement.removeAttribute("data-theme");
+    applyTheme(next);
   }
 
   return { theme, toggle };
@@ -323,9 +333,6 @@ export default function NavBar() {
 
           {/* Background tasks tray */}
           <TasksTray />
-
-          {/* Theme toggle */}
-          <ThemeToggle theme={theme} toggle={toggle} />
 
           {/* User avatar + dropdown */}
           <UserMenu />

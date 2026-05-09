@@ -305,6 +305,14 @@ export default function SettingsPage() {
       saveSettings({ ...settings, ...p });
       window.dispatchEvent(new CustomEvent("corpo-nav-style-changed", { detail: p.navStyle }));
     }
+    if ("theme" in p) {
+      const t = p.theme!;
+      localStorage.setItem("corpo-theme", t);
+      saveSettings({ ...settings, ...p });
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      else document.documentElement.removeAttribute("data-theme");
+      window.dispatchEvent(new Event("corpo-theme-changed"));
+    }
   }
 
   function handleSave() {
@@ -379,6 +387,28 @@ export default function SettingsPage() {
                   style={{
                     backgroundColor: settings.navStyle === opt.value ? "var(--accent-blue)" : "var(--bg-elevated)",
                     color: settings.navStyle === opt.value ? "#fff" : "var(--text-secondary)",
+                    border: "none",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </SettingRow>
+
+          <SettingRow label="Theme" hint="App appearance">
+            <div className="flex rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+              {([
+                { value: "dark",  label: "Dark" },
+                { value: "light", label: "Light" },
+              ] as { value: AppSettings["theme"]; label: string }[]).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => patch({ theme: opt.value })}
+                  className="px-4 py-1.5 text-sm"
+                  style={{
+                    backgroundColor: settings.theme === opt.value ? "var(--accent-blue)" : "var(--bg-elevated)",
+                    color: settings.theme === opt.value ? "#fff" : "var(--text-secondary)",
                     border: "none",
                   }}
                 >

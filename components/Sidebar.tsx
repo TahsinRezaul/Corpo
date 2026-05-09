@@ -117,7 +117,7 @@ function Tab({ href, label, active }: { href: string; label: string; active: boo
 // ── Sidebar (tab bar) ─────────────────────────────────────────────────────────
 export default function Sidebar() {
   const path = usePathname();
-  const { theme, toggle: toggleTheme } = useTheme();
+  useTheme(); // keeps theme in sync; toggle moved to Settings
   // Start with DEFAULT_MODULES so tabs are visible immediately on first paint
   const [modules, setModules] = useState<ModuleEntry[]>(DEFAULT_MODULES);
 
@@ -188,7 +188,6 @@ export default function Sidebar() {
             </svg>
           </div>
         </Link>
-        <ThemeToggle theme={theme} toggle={toggleTheme} />
         <UserMenu />
       </div>
     </nav>

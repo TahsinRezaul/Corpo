@@ -28,8 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           try {
             var s = JSON.parse(localStorage.getItem("corpoAppSettings") || "{}");
             if (s.navStyle === "sidebar") {
+              var c = localStorage.getItem("corpo-sidebar-collapsed") === "1";
               document.documentElement.style.setProperty("--nav-h", "0px");
-              document.documentElement.style.setProperty("--sidebar-w", "220px");
+              document.documentElement.style.setProperty("--sidebar-w", c ? "52px" : "220px");
             }
           } catch(e) {}
         ` }} />

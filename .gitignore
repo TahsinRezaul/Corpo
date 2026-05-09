@@ -6,4 +6,4 @@ node_modules/
 
 certificates/
 data/
-.claude/
+.claude/.env.production.vercel

@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import NavBar from "./NavBar";
 import LeftSidebar from "./LeftSidebar";
+import TopBar from "./TopBar";
 import { getSettings, type AppSettings } from "@/lib/storage";
 
 const NO_NAV = ["/login"];
@@ -26,6 +27,6 @@ export default function ConditionalNavBar() {
 
   if (NO_NAV.some((p) => path === p || path.startsWith(p + "/"))) return null;
   if (navStyle === "fiori")   return <NavBar />;
-  if (navStyle === "sidebar") return <LeftSidebar />;
+  if (navStyle === "sidebar") return <><TopBar /><LeftSidebar /></>;
   return <Sidebar />;
 }
