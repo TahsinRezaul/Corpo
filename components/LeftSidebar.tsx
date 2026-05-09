@@ -288,7 +288,13 @@ export default function LeftSidebar() {
   });
   const [collapsed, setCollapsed] = useState(false);
   const [autoHide, setAutoHide]   = useState(false);
+  const [hoverOpen, setHoverOpen] = useState(false);
   const [editMode, setEditMode]   = useState(false);
+
+  // In auto-hide mode the sidebar is a hover-reveal overlay;
+  // editMode always keeps the sidebar expanded so the user can interact with it.
+  const isExpanded = autoHide ? (hoverOpen || editMode) : !collapsed;
+  const w = isExpanded ? EXPANDED_W : COLLAPSED_W;
 
   useEffect(() => {
     const { modules: m } = loadAll();
@@ -300,26 +306,37 @@ export default function LeftSidebar() {
     document.documentElement.style.setProperty("--sidebar-w", `${c ? COLLAPSED_W : EXPANDED_W}px`);
   }, []);
 
+  // Keep --sidebar-w in sync: auto-hide always reserves only COLLAPSED_W
+  useEffect(() => {
+    if (autoHide) {
+      document.documentElement.style.setProperty("--sidebar-w", `${COLLAPSED_W}px`);
+    } else {
+      document.documentElement.style.setProperty("--sidebar-w", `${collapsed ? COLLAPSED_W : EXPANDED_W}px`);
+    }
+  }, [autoHide, collapsed]);
+
   function toggleCollapsed() {
     const next = !collapsed;
     setCollapsed(next);
     if (next) setEditMode(false);
     localStorage.setItem("corpo-sidebar-collapsed", next ? "1" : "0");
-    document.documentElement.style.setProperty("--sidebar-w", `${next ? COLLAPSED_W : EXPANDED_W}px`);
   }
 
-  function handleNavigate() {
-    if (autoHide && !collapsed) {
-      setCollapsed(true);
-      setEditMode(false);
-      localStorage.setItem("corpo-sidebar-collapsed", "1");
-      document.documentElement.style.setProperty("--sidebar-w", `${COLLAPSED_W}px`);
-    }
+  function handleMouseEnter() {
+    if (autoHide) setHoverOpen(true);
   }
+
+  function handleMouseLeave() {
+    if (autoHide && !editMode) { setHoverOpen(false); }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function handleNavigate() { /* navigation handled by Link, no collapse-on-click needed */ }
 
   function toggleAutoHide() {
     const next = !autoHide;
     setAutoHide(next);
+    if (next) setHoverOpen(false);
     localStorage.setItem("corpo-sidebar-autohide", next ? "1" : "0");
   }
 
@@ -346,43 +363,66 @@ export default function LeftSidebar() {
 
   const modMap = Object.fromEntries(modules.map(m => [m.id, m]));
   const visible = modules.filter(m => !m.hidden);
-  const w = collapsed ? COLLAPSED_W : EXPANDED_W;
 
   return (
-    <nav style={{
-      position: "fixed", top: 52, left: 0, bottom: 0, width: w, zIndex: 40,
-      backgroundColor: "var(--bg-surface)",
-      borderRight: "1px solid var(--border)",
-      display: "flex", flexDirection: "column",
-      overflow: "hidden",
-      transition: "width 0.2s cubic-bezier(0.4,0,0.2,1)",
-    }}>
+    <nav
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      style={{
+        position: "fixed", top: 52, left: 0, bottom: 0, width: w, zIndex: 40,
+        backgroundColor: "var(--bg-surface)",
+        borderRight: "1px solid var(--border)",
+        display: "flex", flexDirection: "column",
+        overflow: "hidden",
+        transition: "width 0.2s cubic-bezier(0.4,0,0.2,1)",
+        boxShadow: autoHide && hoverOpen ? "4px 0 24px rgba(0,0,0,0.35)" : "none",
+      }}
+    >
 
-      {/* ── Collapse toggle strip ── */}
+      {/* ── Top strip: collapse toggle OR pin button ── */}
       <div style={{
         display: "flex", alignItems: "center",
         justifyContent: "flex-end",
-        padding: "4px 6px",
+        padding: "4px 6px", gap: 2,
         borderBottom: "1px solid var(--border)", flexShrink: 0,
       }}>
-        <button onClick={toggleCollapsed} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          style={{
-            width: 24, height: 24, borderRadius: 5, border: "none", cursor: "pointer",
-            backgroundColor: "transparent", color: "var(--text-secondary)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-elevated)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-            style={{ transform: collapsed ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-        </button>
+        {autoHide && isExpanded && (
+          /* Pin button — click to disable auto-hide and keep sidebar open */
+          <button onClick={toggleAutoHide} title="Pin sidebar open (disable auto-hide)"
+            style={{
+              width: 24, height: 24, borderRadius: 5, border: "none", cursor: "pointer",
+              backgroundColor: "transparent", color: "var(--text-secondary)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-elevated)"; (e.currentTarget as HTMLElement).style.color = "var(--accent-blue)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+            </svg>
+          </button>
+        )}
+        {!autoHide && (
+          /* Manual collapse arrow */
+          <button onClick={toggleCollapsed} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            style={{
+              width: 24, height: 24, borderRadius: 5, border: "none", cursor: "pointer",
+              backgroundColor: "transparent", color: "var(--text-secondary)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-elevated)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: collapsed ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* ── Edit mode ── */}
-      {editMode && !collapsed ? (
+      {editMode && isExpanded ? (
         <EditPanel
           modules={modules}
           onMove={moveModule}
@@ -394,10 +434,10 @@ export default function LeftSidebar() {
       ) : (
         <>
           {/* ── Nav items ── */}
-          <div style={{ flex: 1, padding: collapsed ? "6px 4px" : "6px", overflowY: "auto", overflowX: "hidden" }}>
+          <div style={{ flex: 1, padding: isExpanded ? "6px" : "6px 4px", overflowY: "auto", overflowX: "hidden" }}>
 
             {/* Home */}
-            <NavItem href="/" label="Home" active={path === "/"} collapsed={collapsed} onNavigate={handleNavigate}
+            <NavItem href="/" label="Home" active={path === "/"} collapsed={!isExpanded} onNavigate={handleNavigate}
               icon={
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
@@ -406,7 +446,7 @@ export default function LeftSidebar() {
               iconColor="var(--text-secondary)"
             />
 
-            {collapsed ? (
+            {!isExpanded ? (
               /* Icon-only flat list */
               <div style={{ marginTop: 4 }}>
                 {visible.map(mod => (
@@ -457,7 +497,7 @@ export default function LeftSidebar() {
           </div>
 
           {/* ── Bottom: edit button only ── */}
-          {!collapsed && (
+          {isExpanded && (
             <div style={{ borderTop: "1px solid var(--border)", padding: "6px 8px", flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
               <IconBtn onClick={() => setEditMode(true)} title="Edit sidebar" active={editMode}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

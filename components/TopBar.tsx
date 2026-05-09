@@ -84,8 +84,6 @@ export default function TopBar() {
       backgroundColor: "var(--bg-surface)",
       borderBottom: "1px solid var(--border)",
       display: "flex", alignItems: "center",
-      paddingLeft: "var(--sidebar-w, 0px)",
-      transition: "padding-left 0.2s cubic-bezier(0.4,0,0.2,1)",
     }}>
       {/* Logo */}
       <Link href="/" style={{
