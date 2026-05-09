@@ -51,10 +51,19 @@ export default function HSTPage() {
   const periodIncome   = income.filter((e) => inPeriod(e.date));
 
   const hstCollected = periodIncome.reduce((s, e) => s + parseDollar(e.hstCollected), 0);
-  const itc          = periodReceipts.reduce((s, r) => s + parseDollar(r.tax), 0); // Input Tax Credits
-  const netHST       = hstCollected - itc;
-  const owing        = Math.max(0, netHST);
-  const refund       = Math.max(0, -netHST);
+
+  // ITC: use tax_hst when available (more precise than combined tax).
+  // Meals & Entertainment are only 50% ITC-eligible per CRA rules.
+  function receiptITC(r: SavedReceipt): number {
+    const hst = parseDollar(r.tax_hst || r.tax);
+    const isME = r.category === "Meals & Entertainment (50% deductible)";
+    return isME ? hst * 0.5 : hst;
+  }
+
+  const itc    = periodReceipts.reduce((s, r) => s + receiptITC(r), 0);
+  const netHST = hstCollected - itc;
+  const owing  = Math.max(0, netHST);
+  const refund = Math.max(0, -netHST);
 
   // CRA filing deadlines for quarterly filers (Ontario)
   const DEADLINES = [
@@ -155,25 +164,41 @@ export default function HSTPage() {
             <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>ITC Details — Receipts with HST</p>
           </div>
           <div style={{ backgroundColor: "var(--bg-base)", maxHeight: 280, overflowY: "auto" }}>
-            {periodReceipts.filter((r) => parseDollar(r.tax) > 0).length === 0 ? (
+            {periodReceipts.filter((r) => receiptITC(r) > 0).length === 0 ? (
               <p className="px-5 py-6 text-sm" style={{ color: "var(--text-secondary)" }}>No receipts with HST for this period.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                    {["Date", "Vendor", "HST Paid"].map((h) => (
+                    {["Date", "Vendor / HST #", "ITC"].map((h) => (
                       <th key={h} className="px-4 py-2 text-left font-medium" style={{ color: "var(--text-secondary)", fontSize: 11 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {periodReceipts.filter((r) => parseDollar(r.tax) > 0).map((r) => (
-                    <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td className="px-4 py-2.5" style={{ color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{r.date}</td>
-                      <td className="px-4 py-2.5" style={{ color: "var(--text-primary)" }}>{r.vendor || "—"}</td>
-                      <td className="px-4 py-2.5 font-medium" style={{ color: "var(--accent-blue)" }}>{r.tax}</td>
-                    </tr>
-                  ))}
+                  {periodReceipts.filter((r) => receiptITC(r) > 0).map((r) => {
+                    const itcAmt = receiptITC(r);
+                    const isME   = r.category === "Meals & Entertainment (50% deductible)";
+                    return (
+                      <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td className="px-4 py-2.5" style={{ color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{r.date}</td>
+                        <td className="px-4 py-2.5" style={{ color: "var(--text-primary)" }}>
+                          <div>{r.vendor || "—"}</div>
+                          {r.hst_number && (
+                            <div className="text-xs" style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+                              HST# {r.hst_number}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium" style={{ color: "var(--accent-blue)" }}>
+                          {fmt(itcAmt)}
+                          {isME && (
+                            <span className="ml-1 text-xs" style={{ color: "var(--text-secondary)" }}>50%</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

@@ -91,13 +91,41 @@ async function prepareFile(buffer: Buffer, mimeType: string, fileName: string): 
 // ── Claude parsing prompt ──────────────────────────────────────────────────────
 
 const PARSE_PROMPT = `You are a tax assistant for a Canadian Ontario incorporation.
-You are given raw OCR text extracted from a receipt. Parse it and return JSON with these exact fields:
+Extract EVERY piece of data visible on this receipt. Return JSON with these exact fields:
 
-- vendor: business name
-- date: YYYY-MM-DD format (best guess if unclear)
-- subtotal: amount before tax with $ sign (e.g. "$38.94"), or empty string
-- tax: total tax charged (HST/GST/PST) with $ sign (e.g. "$4.55"), or empty string
+IDENTIFICATION
+- vendor: business/store name
+- store_address: full street address of the vendor as printed on the receipt, or ""
+- store_city: city and province, or ""
+- store_postal_code: postal code, or ""
+- store_phone: vendor's phone number exactly as shown, or ""
+- hst_number: vendor's HST/GST registration number (e.g. "123456789 RT0001"), or ""
+
+TRANSACTION
+- date: YYYY-MM-DD (best guess if unclear)
+- purchase_time: time of purchase in HH:MM 24h format, or ""
+- receipt_number: receipt, order, or transaction number exactly as shown, or ""
+- cashier: cashier name or ID if shown, or ""
+
+PAYMENT
+- payment_method: card brand (e.g. "Visa", "Mastercard", "Amex", "Debit"), or "Cash", or ""
+- card_last4: last 4 digits of the card number if shown, or ""
+- auth_code: authorization/approval code if shown, or ""
+
+AMOUNTS
+- subtotal: amount before tax with $ sign (e.g. "$38.94"), or ""
+- tax_hst: HST amount with $ sign, or ""
+- tax_gst: GST amount with $ sign if shown separately, or ""
+- tax_pst: PST amount with $ sign if shown separately, or ""
+- tax: total tax charged (all taxes combined) with $ sign (e.g. "$4.55"), or ""
+- tip: tip/gratuity amount with $ sign if shown, or ""
 - total: final total with $ sign (e.g. "$42.50")
+- tax_rate: tax rate percentage if shown (e.g. "13%"), or ""
+
+ITEMS
+- line_items: array of all purchased items. Each: { "description": string, "qty": string, "unit_price": string, "amount": string, "sku": string }. Use "" for missing fields. Return [] if no items visible.
+
+CLASSIFICATION
 - category: exactly one from the list below
 - business_purpose: one clear sentence on the likely business reason
 - tax_deductible: true or false
@@ -113,6 +141,7 @@ RULES:
 - Car wash, oil change, tires → "Motor Vehicle Expenses — Repairs & Maintenance"
 - Parking, tolls → "Motor Vehicle Expenses — Parking & Tolls"
 - COGS is NEVER for fuel, food, office supplies, or general expenses
+- If a field is not visible on the receipt, return "" — never guess
 
 Respond ONLY with valid JSON. No markdown, no code fences, no extra text.`;
 
@@ -154,7 +183,7 @@ export async function POST(req: NextRequest) {
     // Step 3 — Parse with Claude Haiku
     const message = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 900,
+      max_tokens: 2400,
       messages: [{
         role: "user",
         content: `${PARSE_PROMPT}\n\nOCR TEXT (source: ${ocrSource}):\n\n${ocrText}`,

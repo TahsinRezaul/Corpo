@@ -41,6 +41,7 @@ export type ReceiptForm = {
   shareholder_loan: boolean;
   recurring: boolean;
   recurringInterval: string; // "monthly"|"yearly" legacy, or "Nd"|"Nw"|"Nm"|"Ny" custom
+  business_use_pct: number;  // 0–100, default 100
 };
 
 // Convert an interval string to approximate days (for due-date calculation)
@@ -83,6 +84,7 @@ export const EMPTY_FORM: ReceiptForm = {
   shareholder_loan: false,
   recurring: false,
   recurringInterval: "",
+  business_use_pct: 100,
 };
 
 // Normalized 0–1 bounding box of a detected field within the image
@@ -94,19 +96,51 @@ export type FieldRegion = {
   h: number;
 };
 
+export type ReceiptLineItem = {
+  description: string;
+  qty?: string;
+  unit_price?: string;
+  amount?: string;
+  sku?: string;
+};
+
 // Shape returned by /api/parse-receipt
 export type ParsedReceipt = {
+  // Identification
   vendor?: string;
+  store_address?: string;
+  store_city?: string;
+  store_postal_code?: string;
+  store_phone?: string;
+  hst_number?: string;
+  // Transaction
   date?: string;
+  purchase_time?: string;
+  receipt_number?: string;
+  cashier?: string;
+  // Payment
+  payment_method?: string;
+  card_last4?: string;
+  auth_code?: string;
+  // Amounts
   subtotal?: string;
+  tax_hst?: string;
+  tax_gst?: string;
+  tax_pst?: string;
   tax?: string;
+  tip?: string;
   total?: string;
+  tax_rate?: string;
+  // Items
+  line_items?: ReceiptLineItem[];
+  // Classification
   category?: string;
   business_purpose?: string;
   tax_deductible?: boolean;
+  // Internal
   _thumbnail?: string;
   _parseError?: string;
-  _fields?: FieldRegion[]; // approximate positions of detected fields
+  _fields?: FieldRegion[];
 };
 
 // One item in the upload→review queue
@@ -123,6 +157,26 @@ export type SavedReceipt = ReceiptForm & {
   savedAt: string;
   thumbnail: string;
   tax_deductible: boolean;
+  // Confirmation status
+  ai_confirmed?: boolean;   // false = AI-generated, needs user review
+  // Parsed-only metadata (read-only from AI, editable in modal)
+  store_address?: string;
+  store_city?: string;
+  store_postal_code?: string;
+  store_phone?: string;
+  hst_number?: string;
+  receipt_number?: string;
+  purchase_time?: string;
+  cashier?: string;
+  payment_method?: string;
+  card_last4?: string;
+  auth_code?: string;
+  tax_hst?: string;
+  tax_gst?: string;
+  tax_pst?: string;
+  tip?: string;
+  tax_rate?: string;
+  line_items?: ReceiptLineItem[];
 };
 
 export function categoryStyle(category: string): { bg: string; text: string } {
@@ -670,6 +724,9 @@ export type AppSettings = {
   theme: "dark" | "light";
   locationBias: LocationBias;               // bias geocoding/autocomplete towards a specific area
 
+  // Appearance
+  navStyle: "fiori" | "list" | "sidebar";    // fiori = grid tiles, list = top tabs, sidebar = VS Code-style left panel
+
   // AI
   aiProMode: boolean;                       // allow AI agents to make direct changes to data
 
@@ -680,7 +737,7 @@ export type AppSettings = {
   notif_browserEnabled: boolean;
 };
 
-const DEFAULT_SETTINGS: AppSettings = {
+export const DEFAULT_SETTINGS: AppSettings = {
   invoiceDefaultColumns: ["description", "rate"],
   invoiceNumberFormat: "INV-{YEAR}-{SEQ4}",
   invoiceDateFormat: "YYYY-MM-DD",
@@ -699,6 +756,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   dateFormat: "YYYY-MM-DD",
   theme: "dark",
   locationBias: DEFAULT_LOCATION_BIAS,
+  navStyle: "list",
   aiProMode: false,
   notif_subscriptionReminders: true,
   notif_duplicateWarnings: true,
@@ -720,4 +778,62 @@ export function saveSettings(s: AppSettings): void {
 
 export function patchSettings(patch: Partial<AppSettings>): void {
   saveSettings({ ...getSettings(), ...patch });
+}
+
+// ── AI usage tracking ──────────────────────────────────────────────────────────
+
+export type AiUsageEntry = {
+  date: string;           // "YYYY-MM-DD"
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+};
+
+const AI_USAGE_KEY = "corpoAiUsage";
+
+export function getAiUsage(): AiUsageEntry[] {
+  return readJSON<AiUsageEntry[]>(AI_USAGE_KEY, []);
+}
+
+export function recordAiUsage(promptTokens: number, completionTokens: number): void {
+  const today = new Date().toISOString().slice(0, 10);
+  const all = getAiUsage();
+  const idx = all.findIndex(e => e.date === today);
+  if (idx >= 0) {
+    all[idx] = {
+      ...all[idx],
+      requests: all[idx].requests + 1,
+      promptTokens: all[idx].promptTokens + promptTokens,
+      completionTokens: all[idx].completionTokens + completionTokens,
+    };
+  } else {
+    all.unshift({ date: today, requests: 1, promptTokens, completionTokens });
+  }
+  localStorage.setItem(AI_USAGE_KEY, JSON.stringify(all));
+  syncKey(AI_USAGE_KEY, all);
+}
+
+export function getAiUsageSummary() {
+  const all = getAiUsage();
+  const today = new Date().toISOString().slice(0, 10);
+  const monthPrefix = today.slice(0, 7);
+
+  const todayEntry = all.find(e => e.date === today);
+  const monthEntries = all.filter(e => e.date.startsWith(monthPrefix));
+
+  return {
+    today: {
+      requests: todayEntry?.requests ?? 0,
+      tokens: (todayEntry?.promptTokens ?? 0) + (todayEntry?.completionTokens ?? 0),
+    },
+    month: {
+      requests: monthEntries.reduce((s, e) => s + e.requests, 0),
+      tokens: monthEntries.reduce((s, e) => s + e.promptTokens + e.completionTokens, 0),
+    },
+  };
+}
+
+export function resetAiUsage(): void {
+  localStorage.removeItem(AI_USAGE_KEY);
+  syncKey(AI_USAGE_KEY, []);
 }

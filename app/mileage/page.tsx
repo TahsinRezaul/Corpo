@@ -56,6 +56,7 @@ type TripDraft = {
   purpose: string;
   notes: string;
   startMileage: string;
+  roundTrip: boolean;
 };
 
 function newLeg(): Leg {
@@ -205,7 +206,7 @@ export default function MileagePage() {
   const [showForm, setShowForm]   = useState(false);
   const [editId, setEditId]       = useState<string | null>(null); // single-leg edit
   const [draft, setDraft]         = useState<TripDraft>({
-    date: TODAY, legs: [newLeg()], purpose: "", notes: "", startMileage: "",
+    date: TODAY, legs: [newLeg()], purpose: "", notes: "", startMileage: "", roundTrip: true,
   });
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -476,9 +477,7 @@ export default function MileagePage() {
     const offAddr = office?.address ?? "";
     const l1 = newLeg();
     l1.from = offAddr;
-    const l2 = newLeg();
-    l2.to = offAddr;
-    setDraft({ date: TODAY, legs: [l1, l2], purpose: "", notes: "", startMileage: lastEnd ? String(lastEnd) : "" });
+    setDraft({ date: TODAY, legs: [l1], purpose: "", notes: "", startMileage: lastEnd ? String(lastEnd) : "", roundTrip: true });
     setEditId(null);
     setShowForm(true);
   }
@@ -486,7 +485,7 @@ export default function MileagePage() {
   function openEdit(trip: MileageTrip) {
     const l = newLeg();
     l.from = trip.from; l.to = trip.to;
-    setDraft({ date: trip.date, legs: [l], purpose: trip.purpose, notes: trip.notes ?? "", startMileage: String(trip.startMileage ?? "") });
+    setDraft({ date: trip.date, legs: [l], purpose: trip.purpose, notes: trip.notes ?? "", startMileage: String(trip.startMileage ?? ""), roundTrip: trip.roundTrip ?? false });
     setEditId(trip.id);
     setShowForm(true);
   }
@@ -646,7 +645,8 @@ export default function MileagePage() {
       return;
     }
 
-    // Fetch all leg distances in parallel, close modal immediately
+    // Single-leg round trip: save one entry, double km after distance resolves
+    const isRoundTrip = draft.roundTrip && validLegs.length === 1;
     const groupId  = validLegs.length > 1 ? crypto.randomUUID() : undefined;
     const startMil = parseFloat(draft.startMileage) || undefined;
     const ids      = validLegs.map(() => crypto.randomUUID());
@@ -668,7 +668,7 @@ export default function MileagePage() {
         km: 0,
         kmPending: true,
         startMileage: i === 0 ? startMil : undefined,
-        roundTrip: false,
+        roundTrip: isRoundTrip,
         groupId,
         legOrder: groupId ? i : undefined,
       });
@@ -679,7 +679,8 @@ export default function MileagePage() {
     // Resolve all distances in parallel immediately (don't wait for useEffect)
     const distances = await Promise.all(validLegs.map(fetchDistance));
     for (let i = 0; i < ids.length; i++) {
-      updateMileage(ids[i], { km: distances[i].km, kmPending: false });
+      const km = isRoundTrip ? parseFloat((distances[i].km * 2).toFixed(1)) : distances[i].km;
+      updateMileage(ids[i], { km, kmPending: false });
     }
     setTrips(getMileage());
   }
@@ -1821,6 +1822,33 @@ export default function MileagePage() {
                   <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
                     First leg starts and last leg returns to your office. Each row&apos;s destination auto-fills the next row&apos;s origin.
                   </p>
+                )}
+
+                {/* Round Trip toggle — only shown for single-leg trips */}
+                {draft.legs.length === 1 && (
+                  <div
+                    className="flex items-center gap-2.5 mt-2 px-3 py-2 rounded-lg pressable"
+                    style={{ backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)" }}
+                    onClick={() => setDraft(d => ({ ...d, roundTrip: !d.roundTrip }))}
+                  >
+                    <div className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                      style={{
+                        backgroundColor: draft.roundTrip ? "var(--accent-blue)" : "transparent",
+                        border: `1.5px solid ${draft.roundTrip ? "var(--accent-blue)" : "var(--border)"}`,
+                      }}>
+                      {draft.roundTrip && (
+                        <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+                          <polyline points="2,6 5,9 10,3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>Round Trip</p>
+                      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                        {draft.roundTrip ? "km will be doubled — home → destination → home" : "One-way distance only"}
+                      </p>
+                    </div>
+                  </div>
                 )}
               </div>
 

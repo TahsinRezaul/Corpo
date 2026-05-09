@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { requireAuth } from "@/lib/api-auth";
 
 export const maxDuration = 30;
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const SYSTEM = `You are CORPO's AI assistant — a bookkeeping app for Canadian Ontario businesses.
 The user gives you natural language commands or questions. Return ONLY a JSON object:
@@ -44,19 +44,26 @@ export async function POST(req: NextRequest) {
     ? `App context (current data summary): ${context}\n\nUser request: ${message}`
     : message;
 
-  const msg = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
+  const msg = await openai.chat.completions.create({
+    model: "gpt-5",
     max_tokens: 150,
-    system: SYSTEM,
-    messages: [{ role: "user", content: userContent }],
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: userContent },
+    ],
   });
 
-  const raw = msg.content[0].type === "text" ? msg.content[0].text : "{}";
+  const raw = msg.choices[0]?.message?.content ?? "{}";
   const cleaned = raw.replace(/```json|```/g, "").trim();
+
+  const usage = {
+    promptTokens: msg.usage?.prompt_tokens ?? 0,
+    completionTokens: msg.usage?.completion_tokens ?? 0,
+  };
 
   try {
     const result = JSON.parse(cleaned);
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, _usage: usage });
   } catch {
     return NextResponse.json({
       action: "answer",

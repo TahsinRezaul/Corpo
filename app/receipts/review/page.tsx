@@ -13,11 +13,34 @@ import {
 } from "@/lib/storage";
 import IntervalPicker from "@/components/IntervalPicker";
 
+type TabMeta = {
+  store_address: string; store_city: string; store_postal_code: string;
+  store_phone: string; hst_number: string; receipt_number: string;
+  purchase_time: string; cashier: string; payment_method: string;
+  card_last4: string; auth_code: string; tax_hst: string;
+  tax_gst: string; tax_pst: string; tip: string; tax_rate: string;
+};
+
 type TabState = {
   pending: PendingReceipt;
   form: ReceiptForm;
+  meta: TabMeta;
   saved: boolean;
 };
+
+function metaFromPending(p: PendingReceipt): TabMeta {
+  const d = p.parsed;
+  return {
+    store_address: d.store_address ?? "", store_city: d.store_city ?? "",
+    store_postal_code: d.store_postal_code ?? "", store_phone: d.store_phone ?? "",
+    hst_number: d.hst_number ?? "", receipt_number: d.receipt_number ?? "",
+    purchase_time: d.purchase_time ?? "", cashier: d.cashier ?? "",
+    payment_method: d.payment_method ?? "", card_last4: d.card_last4 ?? "",
+    auth_code: d.auth_code ?? "", tax_hst: d.tax_hst ?? "",
+    tax_gst: d.tax_gst ?? "", tax_pst: d.tax_pst ?? "",
+    tip: d.tip ?? "", tax_rate: d.tax_rate ?? "",
+  };
+}
 
 function formFromPending(p: PendingReceipt): ReceiptForm {
   const d = p.parsed;
@@ -33,6 +56,7 @@ function formFromPending(p: PendingReceipt): ReceiptForm {
     shareholder_loan:   false,
     recurring:          false,
     recurringInterval:  "",
+    business_use_pct:   100,
   };
 }
 
@@ -55,6 +79,89 @@ function DocIcon() {
   );
 }
 
+// ── Parsed Details collapsible (editable) ─────────────────────────────────────
+
+function ReceiptDetails({
+  meta,
+  onUpdate,
+}: {
+  meta: TabMeta;
+  onUpdate: (field: keyof TabMeta, value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ borderBottom: "1px solid var(--border)" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-6 py-3 text-xs font-medium"
+        style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-elevated)" }}
+      >
+        <span>Parsed Details (expand to edit)</span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div className="px-6 py-5 flex flex-col gap-5" style={{ backgroundColor: "var(--bg-base)", borderTop: "1px solid var(--border)" }}>
+          <MetaSection title="Store Info">
+            <MetaInput label="Address" value={meta.store_address} onChange={v => onUpdate("store_address", v)} colSpan={2} />
+            <MetaInput label="City" value={meta.store_city} onChange={v => onUpdate("store_city", v)} />
+            <MetaInput label="Postal Code" value={meta.store_postal_code} onChange={v => onUpdate("store_postal_code", v)} />
+            <MetaInput label="Phone" value={meta.store_phone} onChange={v => onUpdate("store_phone", v)} />
+            <MetaInput label="HST Registration #" value={meta.hst_number} onChange={v => onUpdate("hst_number", v)} />
+          </MetaSection>
+          <MetaSection title="Transaction">
+            <MetaInput label="Receipt #" value={meta.receipt_number} onChange={v => onUpdate("receipt_number", v)} />
+            <MetaInput label="Purchase Time" value={meta.purchase_time} onChange={v => onUpdate("purchase_time", v)} />
+            <MetaInput label="Cashier" value={meta.cashier} onChange={v => onUpdate("cashier", v)} />
+          </MetaSection>
+          <MetaSection title="Payment">
+            <MetaInput label="Method" value={meta.payment_method} onChange={v => onUpdate("payment_method", v)} />
+            <MetaInput label="Card Last 4" value={meta.card_last4} onChange={v => onUpdate("card_last4", v)} />
+            <MetaInput label="Auth Code" value={meta.auth_code} onChange={v => onUpdate("auth_code", v)} />
+          </MetaSection>
+          <MetaSection title="Tax Breakdown">
+            <MetaInput label="HST" value={meta.tax_hst} onChange={v => onUpdate("tax_hst", v)} />
+            <MetaInput label="GST" value={meta.tax_gst} onChange={v => onUpdate("tax_gst", v)} />
+            <MetaInput label="PST" value={meta.tax_pst} onChange={v => onUpdate("tax_pst", v)} />
+            <MetaInput label="Tip" value={meta.tip} onChange={v => onUpdate("tip", v)} />
+            <MetaInput label="Tax Rate" value={meta.tax_rate} onChange={v => onUpdate("tax_rate", v)} />
+          </MetaSection>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetaSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold mb-2.5" style={{ color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{title}</p>
+      <div className="grid grid-cols-2 gap-3">{children}</div>
+    </div>
+  );
+}
+
+function MetaInput({ label, value, onChange, colSpan }: { label: string; value: string; onChange: (v: string) => void; colSpan?: number }) {
+  return (
+    <div style={colSpan === 2 ? { gridColumn: "span 2" } : undefined}>
+      <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{label}</p>
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="—"
+        className="w-full px-3 py-2 rounded-lg text-xs outline-none"
+        style={inputStyle}
+      />
+    </div>
+  );
+}
+
 export default function ReviewPage() {
   const router = useRouter();
   const [tabs, setTabs] = useState<TabState[]>([]);
@@ -70,6 +177,7 @@ export default function ReviewPage() {
     const initial = queue.map((p) => ({
       pending: p,
       form: formFromPending(p),
+      meta: metaFromPending(p),
       saved: false,
     }));
     setTabs(initial);
@@ -77,7 +185,7 @@ export default function ReviewPage() {
     setLoaded(true);
   }, [router]);
 
-  function updateForm(id: string, field: keyof ReceiptForm, value: string | boolean) {
+  function updateForm(id: string, field: keyof ReceiptForm, value: string | boolean | number) {
     setTabs((prev) =>
       prev.map((t) =>
         t.pending.id === id ? { ...t, form: { ...t.form, [field]: value } } : t
@@ -85,23 +193,35 @@ export default function ReviewPage() {
     );
   }
 
+  function updateMeta(id: string, field: keyof TabMeta, value: string) {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.pending.id === id ? { ...t, meta: { ...t.meta, [field]: value } } : t
+      )
+    );
+  }
+
+  function saveTab(tab: TabState) {
+    const d = tab.pending.parsed;
+    addSaved({
+      id:             tab.pending.id,
+      savedAt:        new Date().toISOString(),
+      thumbnail:      tab.pending.thumbnail,
+      tax_deductible: d.tax_deductible ?? true,
+      ai_confirmed:   false,
+      ...tab.form,
+      ...tab.meta,   // user-edited metadata (initialised from parsed)
+      line_items:     d.line_items,
+    });
+  }
+
   function handleSave(id: string) {
     const tab = tabs.find((t) => t.pending.id === id);
     if (!tab) return;
-
-    addSaved({
-      id: tab.pending.id,
-      savedAt: new Date().toISOString(),
-      thumbnail: tab.pending.thumbnail,
-      tax_deductible: tab.pending.parsed.tax_deductible ?? true,
-      ...tab.form,
-    });
-
+    saveTab(tab);
     setTabs((prev) =>
       prev.map((t) => (t.pending.id === id ? { ...t, saved: true } : t))
     );
-
-    // Advance to next unsaved tab automatically
     const nextUnsaved = tabs.find((t) => !t.saved && t.pending.id !== id);
     if (nextUnsaved) setActiveId(nextUnsaved.pending.id);
   }
@@ -111,17 +231,8 @@ export default function ReviewPage() {
   }
 
   function handleFinish() {
-    // Save unsaved tabs — skip completely blank ones (failed parses with no manual input)
     tabs.forEach((tab) => {
-      if (!tab.saved && !isBlank(tab.form)) {
-        addSaved({
-          id: tab.pending.id,
-          savedAt: new Date().toISOString(),
-          thumbnail: tab.pending.thumbnail,
-          tax_deductible: tab.pending.parsed.tax_deductible ?? true,
-          ...tab.form,
-        });
-      }
+      if (!tab.saved && !isBlank(tab.form)) saveTab(tab);
     });
     clearPending();
     router.push("/receipts");
@@ -216,10 +327,7 @@ export default function ReviewPage() {
         )}
 
         {/* Tab strip */}
-        <div
-          className="flex gap-1 mb-4 pb-1"
-          style={{ overflowX: "auto", scrollbarWidth: "none" }}
-        >
+        <div className="flex gap-1 mb-4 pb-1" style={{ overflowX: "auto", scrollbarWidth: "none" }}>
           {tabs.map((tab, i) => {
             const label =
               tab.form.vendor ||
@@ -268,7 +376,7 @@ export default function ReviewPage() {
               </div>
             )}
 
-            {/* Thumbnail preview (if available) */}
+            {/* Thumbnail preview */}
             {activeTab.pending.thumbnail.startsWith("data:") && (
               <div
                 className="flex items-center justify-center p-4"
@@ -282,6 +390,12 @@ export default function ReviewPage() {
                 />
               </div>
             )}
+
+            {/* Collapsible parsed receipt details (editable) */}
+            <ReceiptDetails
+              meta={activeTab.meta}
+              onUpdate={(field, value) => updateMeta(activeId, field, value)}
+            />
 
             <div className="px-6 py-5 flex flex-col gap-5">
 
@@ -348,14 +462,32 @@ export default function ReviewPage() {
                 </Field>
               </div>
 
-              {/* Business Purpose */}
-              <Field label="Business Purpose">
-                <TextInput
-                  value={activeTab.form.business_purpose}
-                  onChange={(v) => updateForm(activeId, "business_purpose", v)}
-                  placeholder="Why was this purchased for the business?"
-                />
-              </Field>
+              {/* Business Purpose + % Business Use */}
+              <div className="grid grid-cols-3 gap-5">
+                <div className="col-span-2">
+                  <Field label="Business Purpose">
+                    <TextInput
+                      value={activeTab.form.business_purpose}
+                      onChange={(v) => updateForm(activeId, "business_purpose", v)}
+                      placeholder="Why was this purchased for the business?"
+                    />
+                  </Field>
+                </div>
+                <Field label="% Business Use">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={activeTab.form.business_use_pct}
+                      onChange={(e) => updateForm(activeId, "business_use_pct", Math.min(100, Math.max(0, Number(e.target.value))))}
+                      className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                      style={inputStyle}
+                    />
+                    <span className="text-sm flex-shrink-0" style={{ color: "var(--text-secondary)" }}>%</span>
+                  </div>
+                </Field>
+              </div>
 
               {/* Notes */}
               <Field label="Notes">
@@ -442,7 +574,6 @@ export default function ReviewPage() {
               className="px-6 py-4 flex items-center justify-between"
               style={{ borderTop: "1px solid var(--border)" }}
             >
-              {/* Skip — removes this receipt entirely */}
               <button
                 onClick={() => handleSkip(activeId)}
                 className="px-4 py-2 rounded-lg text-sm font-medium"
@@ -452,7 +583,6 @@ export default function ReviewPage() {
               </button>
 
               <div className="flex items-center gap-2">
-                {/* Next — advance without saving */}
                 {(() => {
                   const nextTab = tabs.find((t) => t.pending.id !== activeId && !t.saved);
                   return nextTab ? (
@@ -466,7 +596,6 @@ export default function ReviewPage() {
                   ) : null;
                 })()}
 
-                {/* Save Receipt */}
                 <button
                   onClick={() => handleSave(activeId)}
                   disabled={activeTab.saved}
@@ -484,7 +613,6 @@ export default function ReviewPage() {
           </div>
         )}
 
-        {/* Show the doc icon placeholder for PDF/HEIC (used when no data:// thumbnail) */}
         {activeTab &&
           !activeTab.pending.thumbnail.startsWith("data:") &&
           (activeTab.pending.thumbnail === "pdf" || activeTab.pending.thumbnail === "heic") && (
@@ -492,7 +620,6 @@ export default function ReviewPage() {
             <DocIcon />
           </div>
         )}
-
       </div>
     </main>
   );

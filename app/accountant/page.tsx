@@ -68,7 +68,11 @@ function buildReport(year: number): ReportData {
   const totalIncome   = income.reduce((s, e) => s + parseDollar(e.amount), 0);
   const hstCollected  = income.reduce((s, e) => s + parseDollar(e.hstCollected), 0);
   const totalExpenses = receipts.reduce((s, r) => s + parseDollar(r.subtotal || r.total), 0);
-  const hstPaid       = receipts.reduce((s, r) => s + parseDollar(r.tax), 0);
+  // Use tax_hst when available; apply 50% rule for Meals & Entertainment
+  const hstPaid = receipts.reduce((s, r) => {
+    const hst = parseDollar(r.tax_hst || r.tax);
+    return s + (r.category === "Meals & Entertainment (50% deductible)" ? hst * 0.5 : hst);
+  }, 0);
   const totalKm       = trips.reduce((s, t) => s + (t.km || 0), 0);
   const mileageDeduction = calcMileageDeduction(totalKm);
   const loanBalance   = loans.reduce((s, e) => s + e.debit - e.credit, 0);

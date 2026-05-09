@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getSaved, deleteSaved, updateSaved, getDismissedNotifs, dismissNotif, CATEGORIES, categoryStyle, EMPTY_FORM, getSettings, parseIntervalDays, intervalLabel, type SavedReceipt, type ReceiptForm } from "@/lib/storage";
+import { getSaved, deleteSaved, updateSaved, getDismissedNotifs, dismissNotif, CATEGORIES, categoryStyle, EMPTY_FORM, getSettings, parseIntervalDays, intervalLabel, getOfficeLocation, addMileage, type SavedReceipt, type ReceiptForm, type MileageTrip, type OfficeLocation } from "@/lib/storage";
 import IntervalPicker from "@/components/IntervalPicker";
 import * as XLSX from "xlsx";
 import PageHelp from "@/components/PageHelp";
@@ -17,11 +17,19 @@ type Filters = {
   dateTo: string;
 };
 
+type QuickFilter = "unconfirmed" | "flagged" | "shareholder_loan" | "has_address" | "this_month" | "no_category";
+
 type SortBy = "date" | "total" | "vendor" | "category" | "subscription" | null;
 type SortOrder = "asc" | "desc";
-type ViewMode = "list" | "medium" | "large";
+type ViewMode = "row" | "icon" | "spreadsheet";
 
 type AgentMessage = { role: "user" | "assistant"; content: string };
+
+type MileageCalcState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "done"; km: number; minutes: number; toFormatted: string; fromLat?: number; fromLng?: number; toLat?: number; toLng?: number; logged: boolean }
+  | { status: "error"; errorMsg: string };
 type AgentAction =
   | { type: "filter"; filters: Partial<Filters> }
   | { type: "sort"; by: SortBy; order: SortOrder }
@@ -53,7 +61,7 @@ function DocIcon({ size = 32 }: { size?: number }) {
   );
 }
 
-function ListViewIcon({ active }: { active: boolean }) {
+function RowViewIcon({ active }: { active: boolean }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
       style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}>
@@ -64,7 +72,7 @@ function ListViewIcon({ active }: { active: boolean }) {
   );
 }
 
-function MediumViewIcon({ active }: { active: boolean }) {
+function IconViewIcon({ active }: { active: boolean }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
       style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}>
@@ -76,17 +84,33 @@ function MediumViewIcon({ active }: { active: boolean }) {
   );
 }
 
-function LargeViewIcon({ active }: { active: boolean }) {
+function SpreadsheetViewIcon({ active }: { active: boolean }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
       style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}>
-      <rect x="1" y="1" width="6.5" height="8" rx="1.5" fill="currentColor" />
-      <rect x="8.5" y="1" width="6.5" height="8" rx="1.5" fill="currentColor" />
-      <rect x="1" y="10.5" width="6.5" height="4.5" rx="1.5" fill="currentColor" opacity="0.4" />
-      <rect x="8.5" y="10.5" width="6.5" height="4.5" rx="1.5" fill="currentColor" opacity="0.4" />
+      <rect x="1" y="1" width="14" height="3" rx="1" fill="currentColor" />
+      <rect x="1" y="5.5" width="14" height="2" rx="0.5" fill="currentColor" opacity="0.5" />
+      <rect x="1" y="9" width="14" height="2" rx="0.5" fill="currentColor" opacity="0.5" />
+      <rect x="1" y="12.5" width="14" height="2" rx="0.5" fill="currentColor" opacity="0.5" />
+      <line x1="5.5" y1="1" x2="5.5" y2="15" stroke="currentColor" strokeWidth="0.75" opacity="0.4" />
+      <line x1="10" y1="1" x2="10" y2="15" stroke="currentColor" strokeWidth="0.75" opacity="0.4" />
     </svg>
   );
 }
+
+type EditMeta = {
+  store_address: string; store_city: string; store_postal_code: string;
+  store_phone: string; hst_number: string; receipt_number: string;
+  purchase_time: string; cashier: string; payment_method: string;
+  card_last4: string; auth_code: string; tax_hst: string;
+  tax_gst: string; tax_pst: string; tip: string; tax_rate: string;
+};
+const EMPTY_EDIT_META: EditMeta = {
+  store_address: "", store_city: "", store_postal_code: "", store_phone: "",
+  hst_number: "", receipt_number: "", purchase_time: "", cashier: "",
+  payment_method: "", card_last4: "", auth_code: "",
+  tax_hst: "", tax_gst: "", tax_pst: "", tip: "", tax_rate: "",
+};
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
@@ -95,7 +119,7 @@ export default function RecordsPage() {
   const [receipts, setReceipts] = useState<SavedReceipt[]>([]);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<ViewMode>("large");
+  const [view, setView] = useState<ViewMode>("icon");
   const [sortBy, setSortBy] = useState<SortBy>(null);
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set());
@@ -118,9 +142,17 @@ export default function RecordsPage() {
   // ── Edit state ─────────────────────────────────────────────────────────────
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<ReceiptForm>({ ...EMPTY_FORM });
+  const [editMeta, setEditMeta] = useState<EditMeta>({ ...EMPTY_EDIT_META });
 
   // ── Fullscreen image viewer ────────────────────────────────────────────────
   const [fullscreenImg, setFullscreenImg] = useState<string | null>(null);
+
+  // ── Quick filters ──────────────────────────────────────────────────────────
+  const [quickFilter, setQuickFilter] = useState<QuickFilter | null>(null);
+
+  // ── Mileage suggestion state ───────────────────────────────────────────────
+  const [officeLocation, setOfficeLocation] = useState<OfficeLocation | null>(null);
+  const [mileageCalc, setMileageCalc] = useState<MileageCalcState>({ status: "idle" });
 
   // ── Notification state ─────────────────────────────────────────────────────
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
@@ -131,7 +163,7 @@ export default function RecordsPage() {
   useEffect(() => {
     setReceipts(getSaved());
     const saved = localStorage.getItem("recordsView") as ViewMode | null;
-    if (saved === "list" || saved === "medium" || saved === "large") setView(saved);
+    if (saved === "row" || saved === "icon" || saved === "spreadsheet") setView(saved);
     setDismissedKeys(getDismissedNotifs());
     const s = getSettings();
     setAgentProMode(s.aiProMode);
@@ -140,7 +172,13 @@ export default function RecordsPage() {
       dups: s.notif_duplicateWarnings ?? true,
       incomplete: s.notif_incompleteReceipts ?? true,
     });
+    setOfficeLocation(getOfficeLocation());
   }, []);
+
+  // Reset mileage calc when a different receipt is opened
+  useEffect(() => {
+    setMileageCalc({ status: "idle" });
+  }, [selectedId]);
 
   // Escape key exits select mode
   useEffect(() => {
@@ -177,12 +215,31 @@ export default function RecordsPage() {
       shareholder_loan:   r.shareholder_loan,
       recurring:          r.recurring ?? false,
       recurringInterval:  (r.recurringInterval as ReceiptForm["recurringInterval"]) ?? "",
+      business_use_pct:   r.business_use_pct ?? 100,
+    });
+    setEditMeta({
+      store_address:     r.store_address     ?? "",
+      store_city:        r.store_city        ?? "",
+      store_postal_code: r.store_postal_code ?? "",
+      store_phone:       r.store_phone       ?? "",
+      hst_number:        r.hst_number        ?? "",
+      receipt_number:    r.receipt_number    ?? "",
+      purchase_time:     r.purchase_time     ?? "",
+      cashier:           r.cashier           ?? "",
+      payment_method:    r.payment_method    ?? "",
+      card_last4:        r.card_last4        ?? "",
+      auth_code:         r.auth_code         ?? "",
+      tax_hst:           r.tax_hst           ?? "",
+      tax_gst:           r.tax_gst           ?? "",
+      tax_pst:           r.tax_pst           ?? "",
+      tip:               r.tip               ?? "",
+      tax_rate:          r.tax_rate          ?? "",
     });
     setIsEditing(true);
   }
 
   function saveEdits(id: string) {
-    updateSaved(id, { ...editForm });
+    updateSaved(id, { ...editForm, ...editMeta });
     setReceipts(getSaved());
     setIsEditing(false);
   }
@@ -204,6 +261,7 @@ export default function RecordsPage() {
       setHighlightIds(new Set(action.ids));
     } else if (action.type === "clear") {
       setFilters(EMPTY_FILTERS);
+      setQuickFilter(null);
       setSortBy(null);
       setSortOrder("desc");
       setHighlightIds(new Set());
@@ -250,11 +308,31 @@ export default function RecordsPage() {
     }
   }
 
+  const thisMonthPrefix = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+
   const baseFiltered = receipts.filter((r) => {
-    if (filters.search && !r.vendor.toLowerCase().includes(filters.search.toLowerCase())) return false;
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      const searchable = [
+        r.vendor, r.store_address, r.store_city, r.store_postal_code,
+        r.store_phone, r.hst_number, r.receipt_number, r.payment_method,
+        r.card_last4, r.auth_code, r.cashier, r.business_purpose, r.notes,
+        r.category, r.total, r.subtotal,
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!searchable.includes(q)) return false;
+    }
     if (filters.category && r.category !== filters.category) return false;
     if (filters.dateFrom && r.date < filters.dateFrom) return false;
     if (filters.dateTo && r.date > filters.dateTo) return false;
+
+    // Quick filters
+    if (quickFilter === "unconfirmed"     && r.ai_confirmed !== false) return false;
+    if (quickFilter === "flagged"         && getFlags(r).length === 0) return false;
+    if (quickFilter === "shareholder_loan" && !r.shareholder_loan)     return false;
+    if (quickFilter === "has_address"     && !r.store_address && !r.store_city) return false;
+    if (quickFilter === "this_month"      && !r.date?.startsWith(thisMonthPrefix)) return false;
+    if (quickFilter === "no_category"     && r.category) return false;
+
     return true;
   });
 
@@ -287,19 +365,51 @@ export default function RecordsPage() {
   // ── Export (all filtered) ──────────────────────────────────────────────────
   function exportExcel() {
     const rows = filtered.map((r) => ({
-      Date:               r.date,
-      Vendor:             r.vendor,
-      Subtotal:           r.subtotal,
-      Tax:                r.tax,
-      Total:              r.total,
-      Category:           r.category,
-      "Business Purpose": r.business_purpose,
-      Notes:              r.notes,
-      "Shareholder Loan": r.shareholder_loan ? "Yes" : "",
+      Date:                r.date,
+      Vendor:              r.vendor,
+      "Store Address":     r.store_address ?? "",
+      "Store City":        r.store_city ?? "",
+      "Postal Code":       r.store_postal_code ?? "",
+      "Store Phone":       r.store_phone ?? "",
+      "HST #":             r.hst_number ?? "",
+      "Purchase Time":     r.purchase_time ?? "",
+      "Receipt #":         r.receipt_number ?? "",
+      Cashier:             r.cashier ?? "",
+      "Payment Method":    r.payment_method ?? "",
+      "Card Last 4":       r.card_last4 ?? "",
+      "Auth Code":         r.auth_code ?? "",
+      Subtotal:            r.subtotal,
+      HST:                 r.tax_hst ?? "",
+      GST:                 r.tax_gst ?? "",
+      PST:                 r.tax_pst ?? "",
+      Tax:                 r.tax,
+      Tip:                 r.tip ?? "",
+      Total:               r.total,
+      Category:            r.category,
+      "Business Purpose":  r.business_purpose,
+      "% Business Use":    r.business_use_pct ?? 100,
+      Notes:               r.notes ?? "",
+      "Shareholder Loan":  r.shareholder_loan ? "Yes" : "",
+      "AI Confirmed":      r.ai_confirmed === true ? "Yes" : r.ai_confirmed === false ? "Pending" : "",
     }));
-    const ws = XLSX.utils.json_to_sheet(rows);
+
+    // Line items on a separate sheet
+    const lineRows: object[] = [];
+    filtered.forEach((r) => {
+      (r.line_items ?? []).forEach((item) => {
+        lineRows.push({
+          Date: r.date, Vendor: r.vendor,
+          Description: item.description, SKU: item.sku ?? "",
+          Qty: item.qty ?? "", "Unit Price": item.unit_price ?? "", Amount: item.amount ?? "",
+        });
+      });
+    });
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Receipts");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Receipts");
+    if (lineRows.length > 0) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lineRows), "Line Items");
+    }
     XLSX.writeFile(wb, "receipts.xlsx");
   }
 
@@ -317,6 +427,53 @@ export default function RecordsPage() {
     setSelectedIds(new Set());
   }
 
+  async function calculateMileage() {
+    if (!selected || !officeLocation) return;
+    const dest = [selected.store_address, selected.store_city].filter(Boolean).join(", ");
+    if (!dest) return;
+    setMileageCalc({ status: "loading" });
+    try {
+      const params = new URLSearchParams({ from: officeLocation.address, to: dest });
+      const res = await fetch(`/api/distance?${params}`);
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error ?? "Distance API error");
+      setMileageCalc({
+        status: "done",
+        km: data.km,
+        minutes: data.minutes,
+        toFormatted: data.toFormatted,
+        fromLat: data.fromLat,
+        fromLng: data.fromLng,
+        toLat: data.toLat,
+        toLng: data.toLng,
+        logged: false,
+      });
+    } catch (e) {
+      setMileageCalc({ status: "error", errorMsg: e instanceof Error ? e.message : "Could not calculate distance" });
+    }
+  }
+
+  function logMileageTrip() {
+    if (!selected || mileageCalc.status !== "done" || !officeLocation) return;
+    const roundKm = parseFloat((mileageCalc.km * 2).toFixed(1));
+    const trip: MileageTrip = {
+      id: crypto.randomUUID(),
+      date: selected.date,
+      from: officeLocation.address,
+      to: [selected.store_address, selected.store_city].filter(Boolean).join(", "),
+      fromLat: mileageCalc.fromLat,
+      fromLng: mileageCalc.fromLng,
+      toLat: mileageCalc.toLat,
+      toLng: mileageCalc.toLng,
+      purpose: selected.business_purpose || `Trip to ${selected.vendor}`,
+      km: roundKm,
+      roundTrip: true,
+      notes: `Auto-suggested from receipt: ${selected.vendor}`,
+    };
+    addMileage(trip);
+    setMileageCalc({ ...mileageCalc, logged: true });
+  }
+
   function selectAll() {
     setSelectedIds(new Set(filtered.map((r) => r.id)));
   }
@@ -332,19 +489,35 @@ export default function RecordsPage() {
   function exportSelected() {
     const toExport = receipts.filter((r) => selectedIds.has(r.id));
     const rows = toExport.map((r) => ({
-      Date:               r.date,
-      Vendor:             r.vendor,
-      Subtotal:           r.subtotal,
-      Tax:                r.tax,
-      Total:              r.total,
-      Category:           r.category,
-      "Business Purpose": r.business_purpose,
-      Notes:              r.notes,
-      "Shareholder Loan": r.shareholder_loan ? "Yes" : "",
+      Date:                r.date,
+      Vendor:              r.vendor,
+      "Store Address":     r.store_address ?? "",
+      "Store City":        r.store_city ?? "",
+      "Postal Code":       r.store_postal_code ?? "",
+      "HST #":             r.hst_number ?? "",
+      "Purchase Time":     r.purchase_time ?? "",
+      "Receipt #":         r.receipt_number ?? "",
+      "Payment Method":    r.payment_method ?? "",
+      "Card Last 4":       r.card_last4 ?? "",
+      Subtotal:            r.subtotal,
+      HST:                 r.tax_hst ?? "",
+      Tax:                 r.tax,
+      Total:               r.total,
+      Category:            r.category,
+      "Business Purpose":  r.business_purpose,
+      "% Business Use":    r.business_use_pct ?? 100,
+      Notes:               r.notes ?? "",
+      "Shareholder Loan":  r.shareholder_loan ? "Yes" : "",
     }));
-    const ws = XLSX.utils.json_to_sheet(rows);
+    const lineRows: object[] = [];
+    toExport.forEach((r) => {
+      (r.line_items ?? []).forEach((item) => {
+        lineRows.push({ Date: r.date, Vendor: r.vendor, Description: item.description, SKU: item.sku ?? "", Qty: item.qty ?? "", "Unit Price": item.unit_price ?? "", Amount: item.amount ?? "" });
+      });
+    });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Receipts");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Receipts");
+    if (lineRows.length > 0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lineRows), "Line Items");
     XLSX.writeFile(wb, "receipts-selected.xlsx");
   }
 
@@ -450,6 +623,24 @@ export default function RecordsPage() {
   const visibleDupInfo   = notifSettings.dups       ? dupInfo                                                  : new Map<string, { tooltip: string; pairKey: string }>();
 
   const totalNotifCount = visibleDupPairs.length + activeDueSubs.length;
+
+  // ── Per-receipt flags ────────────────────────────────────────────────────
+  function getFlags(r: SavedReceipt): string[] {
+    const flags: string[] = [];
+    if (!r.vendor)    flags.push("Missing vendor");
+    if (!r.total)     flags.push("Missing total");
+    if (!r.date)      flags.push("Missing date");
+    if (!r.category)  flags.push("No category");
+    if (r.subtotal && r.tax && r.total) {
+      const sub = parseFloat(r.subtotal.replace(/[^0-9.]/g, "")) || 0;
+      const tax = parseFloat(r.tax.replace(/[^0-9.]/g, "")) || 0;
+      if (sub > 0 && tax / sub > 0.20) flags.push("Unusually high tax");
+    }
+    if (visibleDupIds.has(r.id)) flags.push("Possible duplicate");
+    return flags;
+  }
+
+  const unconfirmedCount = receipts.filter((r) => r.ai_confirmed === false).length;
 
   const inputStyle: React.CSSProperties = {
     backgroundColor: "var(--bg-elevated)",
@@ -762,8 +953,8 @@ export default function RecordsPage() {
                 className="px-3 py-2 rounded-lg text-sm outline-none"
                 style={{ ...inputStyle, color: filters.dateTo ? "var(--text-primary)" : "var(--text-secondary)" }}
               />
-              {(filters.search || filters.category || filters.dateFrom || filters.dateTo) && (
-                <button onClick={() => setFilters(EMPTY_FILTERS)}
+              {(filters.search || filters.category || filters.dateFrom || filters.dateTo || quickFilter) && (
+                <button onClick={() => { setFilters(EMPTY_FILTERS); setQuickFilter(null); }}
                   className="px-3 py-2 rounded-lg text-sm"
                   style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-elevated)" }}>
                   Clear
@@ -778,7 +969,7 @@ export default function RecordsPage() {
                 className="flex items-center rounded-lg overflow-hidden"
                 style={{ border: "1px solid var(--border)", backgroundColor: "var(--bg-elevated)" }}
               >
-                {(["list", "medium", "large"] as ViewMode[]).map((v) => (
+                {(["icon", "row", "spreadsheet"] as ViewMode[]).map((v) => (
                   <button
                     key={v}
                     onClick={() => changeView(v)}
@@ -786,12 +977,12 @@ export default function RecordsPage() {
                     title={v.charAt(0).toUpperCase() + v.slice(1)}
                     style={{
                       backgroundColor: view === v ? "var(--accent-blue)" : "transparent",
-                      borderRight: v !== "large" ? "1px solid var(--border)" : undefined,
+                      borderRight: v !== "spreadsheet" ? "1px solid var(--border)" : undefined,
                     }}
                   >
-                    {v === "list"   && <ListViewIcon   active={view === v} />}
-                    {v === "medium" && <MediumViewIcon active={view === v} />}
-                    {v === "large"  && <LargeViewIcon  active={view === v} />}
+                    {v === "icon"        && <IconViewIcon        active={view === v} />}
+                    {v === "row"         && <RowViewIcon         active={view === v} />}
+                    {v === "spreadsheet" && <SpreadsheetViewIcon active={view === v} />}
                   </button>
                 ))}
               </div>
@@ -811,8 +1002,45 @@ export default function RecordsPage() {
               {sortBy && <button onClick={() => { setSortBy(null); setSortOrder("desc"); }} className="text-xs px-2 py-1 rounded-lg" style={{ color: "var(--text-secondary)" }}>✕</button>}
             </div>
 
+            {/* Quick filter chips */}
+            {(() => {
+              const allChips: { key: QuickFilter; label: string; count?: number }[] = [
+                { key: "unconfirmed",      label: "Unconfirmed",      count: receipts.filter(r => r.ai_confirmed === false).length },
+                { key: "flagged",          label: "Flagged",          count: receipts.filter(r => getFlags(r).length > 0).length },
+                { key: "no_category",      label: "No category",      count: receipts.filter(r => !r.category).length },
+                { key: "shareholder_loan", label: "Shareholder loan",  count: receipts.filter(r => r.shareholder_loan).length },
+                { key: "has_address",      label: "Has address" },
+                { key: "this_month",       label: "This month" },
+              ];
+              const chips = allChips.filter(c => c.count === undefined || c.count > 0);
+              if (chips.length === 0) return null;
+              return (
+                <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                  <span className="text-xs mr-1" style={{ color: "var(--text-secondary)" }}>Filter:</span>
+                  {chips.map((c) => (
+                    <button
+                      key={c.key}
+                      onClick={() => setQuickFilter(prev => prev === c.key ? null : c.key)}
+                      className="text-xs px-2.5 py-1 rounded-full flex items-center gap-1"
+                      style={{
+                        backgroundColor: quickFilter === c.key ? "var(--accent-blue)" : "var(--bg-elevated)",
+                        color: quickFilter === c.key ? "#fff" : "var(--text-secondary)",
+                        border: `1px solid ${quickFilter === c.key ? "var(--accent-blue)" : "var(--border)"}`,
+                      }}
+                    >
+                      {c.label}
+                      {c.count !== undefined && <span style={{ opacity: 0.7 }}>{c.count}</span>}
+                    </button>
+                  ))}
+                  {quickFilter && (
+                    <button onClick={() => setQuickFilter(null)} className="text-xs px-1.5 py-1 rounded-full ml-0.5" style={{ color: "var(--text-secondary)" }}>✕</button>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Results count */}
-            {(filters.search || filters.category || filters.dateFrom || filters.dateTo) && (
+            {(filters.search || filters.category || filters.dateFrom || filters.dateTo || quickFilter) && (
               <p className="text-sm mb-4" style={{ color: "var(--text-secondary)" }}>
                 {filtered.length} result{filtered.length !== 1 ? "s" : ""}
               </p>
@@ -842,11 +1070,33 @@ export default function RecordsPage() {
               );
             })()}
 
+            {/* Unconfirmed receipts banner */}
+            {unconfirmedCount > 0 && (
+              <div className="mb-4 flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-sm"
+                style={{ backgroundColor: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.3)" }}>
+                <div className="flex items-center gap-2.5">
+                  <span style={{ fontSize: 14 }}>●</span>
+                  <span style={{ color: "#ca8a04" }}>
+                    <strong>{unconfirmedCount} receipt{unconfirmedCount !== 1 ? "s" : ""}</strong> have AI-generated data waiting for your review
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    const first = filtered.find((r) => r.ai_confirmed === false);
+                    if (first) setSelectedId(first.id);
+                  }}
+                  className="text-xs px-2.5 py-1 rounded-lg font-medium flex-shrink-0"
+                  style={{ backgroundColor: "rgba(234,179,8,0.15)", color: "#ca8a04" }}>
+                  Review →
+                </button>
+              </div>
+            )}
+
             {filtered.length === 0 ? (
               <p className="text-center py-16 text-sm" style={{ color: "var(--text-secondary)" }}>
                 No receipts match your filters.
               </p>
-            ) : view === "list" ? (
+            ) : view === "row" ? (
               <ListGrid
                 receipts={filtered}
                 onSelect={(id) => { if (!selectMode) setSelectedId(id); }}
@@ -858,13 +1108,22 @@ export default function RecordsPage() {
                 onDismissDup={handleDismiss}
                 suggestedSubIds={suggestedSubIds}
                 onMarkSub={(id) => { updateSaved(id, { recurring: true, recurringInterval: "1m" }); setReceipts(getSaved()); }}
+                getFlags={getFlags}
+              />
+            ) : view === "spreadsheet" ? (
+              <SpreadsheetGrid
+                receipts={filtered}
+                onSelect={(id) => { if (!selectMode) setSelectedId(id); }}
+                selectMode={selectMode}
+                selectedIds={selectedIds}
+                onToggle={toggleSelect}
+                getFlags={getFlags}
               />
             ) : (
               <CardGrid
                 receipts={filtered}
                 onSelect={(id) => { if (!selectMode) setSelectedId(id); }}
                 onZoom={(src) => setFullscreenImg(src)}
-                view={view}
                 selectMode={selectMode}
                 selectedIds={selectedIds}
                 onToggle={toggleSelect}
@@ -873,6 +1132,7 @@ export default function RecordsPage() {
                 onDismissDup={handleDismiss}
                 suggestedSubIds={suggestedSubIds}
                 onMarkSub={(id) => { updateSaved(id, { recurring: true, recurringInterval: "1m" }); setReceipts(getSaved()); }}
+                getFlags={getFlags}
               />
             )}
           </>
@@ -932,7 +1192,47 @@ export default function RecordsPage() {
             {/* VIEW mode */}
             {!isEditing && (
               <div className="px-5 py-4 flex flex-col gap-3">
-                {duplicateIds.has(selected.id) && (() => {
+
+                {/* AI confirmation banner */}
+                {selected.ai_confirmed === false && (() => {
+                  const flags = getFlags(selected);
+                  return (
+                    <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(234,179,8,0.35)" }}>
+                      <div className="flex items-center justify-between gap-3 px-3 py-2.5"
+                        style={{ backgroundColor: "rgba(234,179,8,0.1)" }}>
+                        <div className="flex items-center gap-2">
+                          <span style={{ fontSize: 12 }}>●</span>
+                          <span className="text-xs font-medium" style={{ color: "#ca8a04" }}>
+                            AI-generated — review and confirm
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => { updateSaved(selected.id, { ai_confirmed: true }); setReceipts(getSaved()); }}
+                          className="text-xs px-3 py-1 rounded-lg font-semibold flex-shrink-0"
+                          style={{ backgroundColor: "var(--accent-green)", color: "#fff" }}>
+                          Confirm ✓
+                        </button>
+                      </div>
+                      {flags.length > 0 && (
+                        <div className="px-3 py-2 flex flex-col gap-1"
+                          style={{ backgroundColor: "rgba(239,68,68,0.06)", borderTop: "1px solid rgba(239,68,68,0.15)" }}>
+                          {flags.map((f) => (
+                            <div key={f} className="flex items-center gap-1.5 text-xs" style={{ color: "#f87171" }}>
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                              </svg>
+                              {f}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Duplicate warning (when confirmed) */}
+                {selected.ai_confirmed !== false && duplicateIds.has(selected.id) && (() => {
                   const info = dupInfo.get(selected.id);
                   return (
                     <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs"
@@ -945,21 +1245,74 @@ export default function RecordsPage() {
                         </svg>
                         <span>{info?.tooltip ?? "Possible duplicate — same vendor and total within 31 days"}</span>
                       </div>
-                      <button
-                        onClick={() => info && handleDismiss(info.pairKey)}
+                      <button onClick={() => info && handleDismiss(info.pairKey)}
                         className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md font-medium"
-                        style={{ backgroundColor: "rgba(251,191,36,0.15)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.3)" }}
-                      >
+                        style={{ backgroundColor: "rgba(251,191,36,0.15)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.3)" }}>
                         Not a duplicate
                       </button>
                     </div>
                   );
                 })()}
-                <Row label="Date"             value={selected.date} />
-                <Row label="Vendor"           value={selected.vendor} />
-                <Row label="Subtotal"         value={selected.subtotal} />
-                <Row label="Tax"              value={selected.tax} />
-                <Row label="Total"            value={selected.total} />
+
+                {/* ── VENDOR ── */}
+                <SectionLabel>Vendor</SectionLabel>
+                <Row label="Name"           value={selected.vendor} />
+                <Row label="Address"        value={selected.store_address ?? ""} />
+                <Row label="City"           value={selected.store_city ?? ""} />
+                <Row label="Postal Code"    value={selected.store_postal_code ?? ""} />
+                <Row label="Phone"          value={selected.store_phone ?? ""} />
+                <Row label="HST #"          value={selected.hst_number ?? ""} />
+
+                {/* ── TRANSACTION ── */}
+                <SectionLabel>Transaction</SectionLabel>
+                <Row label="Date"           value={selected.date} />
+                <Row label="Time"           value={selected.purchase_time ?? ""} />
+                <Row label="Receipt #"      value={selected.receipt_number ?? ""} />
+                <Row label="Cashier"        value={selected.cashier ?? ""} />
+
+                {/* ── PAYMENT ── */}
+                {(selected.payment_method || selected.card_last4 || selected.auth_code) && (
+                  <>
+                    <SectionLabel>Payment</SectionLabel>
+                    <Row label="Method"       value={selected.payment_method ?? ""} />
+                    {selected.card_last4 && <Row label="Card" value={`•••• ${selected.card_last4}`} />}
+                    <Row label="Auth Code"    value={selected.auth_code ?? ""} />
+                  </>
+                )}
+
+                {/* ── AMOUNTS ── */}
+                <SectionLabel>Amounts</SectionLabel>
+                <Row label="Subtotal"       value={selected.subtotal} />
+                {selected.tax_hst  && <Row label="HST"     value={`${selected.tax_hst}${selected.tax_rate ? `  (${selected.tax_rate})` : ""}`} />}
+                {selected.tax_gst  && <Row label="GST"     value={selected.tax_gst} />}
+                {selected.tax_pst  && <Row label="PST"     value={selected.tax_pst} />}
+                {!selected.tax_hst && !selected.tax_gst && <Row label="Tax" value={selected.tax} />}
+                {selected.tip      && <Row label="Tip"     value={selected.tip} />}
+                <Row label="Total"          value={selected.total} />
+
+                {/* ── LINE ITEMS ── */}
+                {selected.line_items && selected.line_items.length > 0 && (
+                  <div>
+                    <SectionLabel>Line Items</SectionLabel>
+                    <div className="flex flex-col gap-1">
+                      {selected.line_items.map((item, i) => (
+                        <div key={i} className="flex items-start justify-between gap-2 text-xs px-3 py-2 rounded-lg"
+                          style={{ backgroundColor: "var(--bg-elevated)" }}>
+                          <div>
+                            <span style={{ color: "var(--text-primary)" }}>{item.description || "—"}</span>
+                            {item.sku && <span className="ml-2" style={{ color: "var(--text-secondary)" }}>SKU: {item.sku}</span>}
+                          </div>
+                          <div className="flex-shrink-0 text-right" style={{ color: "var(--text-secondary)" }}>
+                            {item.qty && <span className="mr-2">Qty: {item.qty}</span>}
+                            <span>{item.amount || item.unit_price || ""}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* ── CLASSIFICATION ── */}
+                <SectionLabel>Classification</SectionLabel>
                 {selected.category && (
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Category</span>
@@ -970,19 +1323,103 @@ export default function RecordsPage() {
                   </div>
                 )}
                 <Row label="Business Purpose" value={selected.business_purpose} />
+                <Row label="% Business Use"   value={selected.business_use_pct != null ? `${selected.business_use_pct}%` : "100%"} />
                 {selected.notes && <Row label="Notes" value={selected.notes} />}
-                {selected.shareholder_loan && (
-                  <div className="text-xs px-3 py-2 rounded-lg"
-                    style={{ backgroundColor: "rgba(245,158,11,0.1)", color: "var(--accent-amber)" }}>
-                    Shareholder Loan
-                  </div>
-                )}
-                {selected.recurring && (
-                  <div className="text-xs px-3 py-2 rounded-lg"
-                    style={{ backgroundColor: "rgba(16,185,129,0.1)", color: "var(--accent-green)" }}>
-                    Recurring — {selected.recurringInterval}
-                  </div>
-                )}
+                <div className="flex gap-2 flex-wrap">
+                  {selected.shareholder_loan && (
+                    <div className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{ backgroundColor: "rgba(245,158,11,0.1)", color: "var(--accent-amber)" }}>
+                      Shareholder Loan
+                    </div>
+                  )}
+                  {selected.recurring && (
+                    <div className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{ backgroundColor: "rgba(16,185,129,0.1)", color: "var(--accent-green)" }}>
+                      ⟳ Recurring — {selected.recurringInterval}
+                    </div>
+                  )}
+                  {selected.ai_confirmed && (
+                    <div className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{ backgroundColor: "rgba(16,185,129,0.08)", color: "var(--accent-green)" }}>
+                      ✓ Confirmed
+                    </div>
+                  )}
+                </div>
+                {/* ── FULL RECEIPT TEXT ── */}
+                <SavedReceiptDetails r={selected} />
+
+                {/* ── MILEAGE SUGGESTION ── */}
+                {(() => {
+                  const dest = [selected.store_address, selected.store_city].filter(Boolean).join(", ");
+                  if (!dest) return null;
+                  return (
+                    <>
+                      <SectionLabel>Mileage</SectionLabel>
+                      {!officeLocation ? (
+                        <div className="text-xs px-3 py-2.5 rounded-lg flex items-center gap-2"
+                          style={{ backgroundColor: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                            <circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/>
+                          </svg>
+                          <span>Set a home/office address in <Link href="/mileage" className="underline">Mileage</Link> to get mileage suggestions.</span>
+                        </div>
+                      ) : mileageCalc.status === "idle" ? (
+                        <button
+                          onClick={calculateMileage}
+                          className="w-full text-left text-xs px-3 py-2.5 rounded-lg flex items-center gap-2"
+                          style={{ backgroundColor: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--accent-blue)", flexShrink: 0 }}>
+                            <circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/>
+                          </svg>
+                          Calculate round trip from {officeLocation.label || "Home"} to {selected.vendor}
+                        </button>
+                      ) : mileageCalc.status === "loading" ? (
+                        <div className="text-xs px-3 py-2.5 rounded-lg" style={{ backgroundColor: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
+                          Calculating distance…
+                        </div>
+                      ) : mileageCalc.status === "error" ? (
+                        <div className="text-xs px-3 py-2.5 rounded-lg flex items-center justify-between gap-2"
+                          style={{ backgroundColor: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)", color: "#f87171" }}>
+                          <span>Could not calculate distance.</span>
+                          <button onClick={() => setMileageCalc({ status: "idle" })} className="underline flex-shrink-0">Retry</button>
+                        </div>
+                      ) : mileageCalc.status === "done" ? (
+                        <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                          <div className="px-3 py-2.5 flex flex-col gap-1.5" style={{ backgroundColor: "var(--bg-elevated)" }}>
+                            <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                              {officeLocation.label || "Home"} → {mileageCalc.toFormatted} → {officeLocation.label || "Home"}
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+                                  {(mileageCalc.km * 2).toFixed(1)} km
+                                </span>
+                                <span className="text-xs ml-2" style={{ color: "var(--text-secondary)" }}>
+                                  round trip · ${(mileageCalc.km * 2 * 0.70).toFixed(2)} deduction
+                                </span>
+                              </div>
+                              {mileageCalc.logged ? (
+                                <span className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                                  style={{ backgroundColor: "rgba(16,185,129,0.12)", color: "var(--accent-green)" }}>
+                                  ✓ Logged
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={logMileageTrip}
+                                  className="text-xs px-2.5 py-1 rounded-lg font-medium flex-shrink-0"
+                                  style={{ backgroundColor: "var(--accent-blue)", color: "#fff" }}>
+                                  Log Trip
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  );
+                })()}
+
                 <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
                   Saved {new Date(selected.savedAt).toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric" })}
                 </p>
@@ -1033,6 +1470,15 @@ export default function RecordsPage() {
                     onChange={(e) => setEditForm(f => ({ ...f, business_purpose: e.target.value }))}
                     className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={editInputStyle} />
                 </EditField>
+                <EditField label="% Business Use">
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={0} max={100}
+                      value={editForm.business_use_pct ?? 100}
+                      onChange={(e) => setEditForm(f => ({ ...f, business_use_pct: Math.min(100, Math.max(0, Number(e.target.value))) }))}
+                      className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={editInputStyle} />
+                    <span className="text-sm flex-shrink-0" style={{ color: "var(--text-secondary)" }}>%</span>
+                  </div>
+                </EditField>
                 <EditField label="Notes">
                   <textarea value={editForm.notes}
                     onChange={(e) => setEditForm(f => ({ ...f, notes: e.target.value }))}
@@ -1080,6 +1526,12 @@ export default function RecordsPage() {
                     />
                   )}
                 </div>
+                {/* Parsed metadata (collapsible) */}
+                <EditParsedDetails
+                  meta={editMeta}
+                  onUpdate={(f, v) => setEditMeta(prev => ({ ...prev, [f]: v }))}
+                  inputStyle={editInputStyle}
+                />
               </div>
             )}
 
@@ -1343,6 +1795,7 @@ function ListGrid({
   onDismissDup,
   suggestedSubIds,
   onMarkSub,
+  getFlags,
 }: {
   receipts: SavedReceipt[];
   onSelect: (id: string) => void;
@@ -1354,6 +1807,7 @@ function ListGrid({
   onDismissDup: (key: string) => void;
   suggestedSubIds: Set<string>;
   onMarkSub: (id: string) => void;
+  getFlags: (r: SavedReceipt) => string[];
 }) {
   const colTemplate = "32px 36px 1fr 100px minmax(120px,200px) 70px";
 
@@ -1382,6 +1836,8 @@ function ListGrid({
         const cs = categoryStyle(r.category);
         const hasThumbnail = r.thumbnail.startsWith("data:");
         const isSelected = selectedIds.has(r.id);
+        const flags = getFlags(r);
+        const needsConfirm = r.ai_confirmed === false;
         return (
           <div
             key={r.id}
@@ -1415,11 +1871,19 @@ function ListGrid({
             </div>
 
             {/* Tiny thumbnail */}
-            <div className="w-9 h-9 rounded-md overflow-hidden flex items-center justify-center flex-shrink-0"
+            <div className="w-9 h-9 rounded-md overflow-hidden flex items-center justify-center flex-shrink-0 relative"
               style={{ backgroundColor: "var(--bg-elevated)" }}>
               {hasThumbnail
                 ? <img src={r.thumbnail} alt="" className="w-full h-full object-cover" /> // eslint-disable-line @next/next/no-img-element
                 : <DocIcon size={16} />}
+              {/* Status dot overlay */}
+              {(needsConfirm || flags.length > 0) && (
+                <div className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                  style={{
+                    backgroundColor: flags.length > 0 ? "#f87171" : "#eab308",
+                    borderColor: "var(--bg-base)",
+                  }} />
+              )}
             </div>
 
             {/* Vendor */}
@@ -1428,6 +1892,22 @@ function ListGrid({
                 <p className="text-sm truncate" style={{ color: "var(--text-primary)" }}>
                   {r.vendor || "Unknown vendor"}
                 </p>
+                {flags.length > 0 && (
+                  <div className="relative group/flag flex-shrink-0">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 z-50 hidden group-hover/flag:block" style={{ transform: "translateX(-50%)" }}>
+                      <div className="rounded-lg px-2.5 py-1.5 text-xs" style={{ backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)", boxShadow: "0 4px 12px rgba(0,0,0,0.4)", whiteSpace: "nowrap" }}>
+                        {flags.join(" · ")}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {needsConfirm && flags.length === 0 && (
+                  <span style={{ fontSize: 9, color: "#eab308" }}>●</span>
+                )}
                 {duplicateIds.has(r.id) && (() => {
                   const info = dupInfo.get(r.id);
                   return (
@@ -1438,7 +1918,6 @@ function ListGrid({
                         <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
                         <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                       </svg>
-                      {/* Tooltip */}
                       <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 z-50 hidden group-hover/dup:block"
                         style={{ transform: "translateX(-50%)" }}>
                         <div className="rounded-lg px-2.5 py-1.5 text-xs whitespace-nowrap"
@@ -1496,7 +1975,6 @@ function CardGrid({
   receipts,
   onSelect,
   onZoom,
-  view,
   selectMode,
   selectedIds,
   onToggle,
@@ -1505,11 +1983,11 @@ function CardGrid({
   onDismissDup,
   suggestedSubIds,
   onMarkSub,
+  getFlags,
 }: {
   receipts: SavedReceipt[];
   onSelect: (id: string) => void;
   onZoom: (src: string) => void;
-  view: "medium" | "large";
   selectMode: boolean;
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
@@ -1518,10 +1996,10 @@ function CardGrid({
   onDismissDup: (key: string) => void;
   suggestedSubIds: Set<string>;
   onMarkSub: (id: string) => void;
+  getFlags: (r: SavedReceipt) => string[];
 }) {
-  const isLarge = view === "large";
-  const thumbHeight = isLarge ? 140 : 90;
-  const minCardWidth = isLarge ? 260 : 160;
+  const thumbHeight = 120;
+  const minCardWidth = 180;
 
   return (
     <div className="grid gap-4"
@@ -1530,6 +2008,9 @@ function CardGrid({
         const cs = categoryStyle(r.category);
         const hasThumbnail = r.thumbnail.startsWith("data:");
         const isSelected = selectedIds.has(r.id);
+        const flags = getFlags(r);
+        const needsConfirm = r.ai_confirmed === false;
+        const statusColor = flags.length > 0 ? "#f87171" : needsConfirm ? "#eab308" : null;
         return (
           <div
             key={r.id}
@@ -1553,7 +2034,7 @@ function CardGrid({
             >
               {hasThumbnail
                 ? <img src={r.thumbnail} alt={r.vendor} className="w-full h-full object-cover" /> // eslint-disable-line @next/next/no-img-element
-                : <DocIcon size={isLarge ? 32 : 22} />}
+                : <DocIcon size={24} />}
 
               {/* Zoom button — shows on hover when there's an image */}
               {hasThumbnail && (
@@ -1591,13 +2072,24 @@ function CardGrid({
                   </svg>
                 )}
               </div>
+
+              {/* Status dot — top right */}
+              {statusColor && (
+                <div style={{
+                  position: "absolute", top: 6, right: 6, zIndex: 15,
+                  width: 10, height: 10, borderRadius: "50%",
+                  backgroundColor: statusColor,
+                  border: "2px solid var(--bg-surface)",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
+                }} />
+              )}
             </div>
 
             {/* Info */}
-            <div className={isLarge ? "px-4 py-3" : "px-3 py-2"}>
+            <div className="px-3 py-2">
               <div className="flex items-start justify-between gap-1">
                 <div className="flex items-center gap-1 min-w-0">
-                  <p className={`font-medium truncate ${isLarge ? "text-sm" : "text-xs"}`}
+                  <p className="font-medium truncate text-xs"
                     style={{ color: "var(--text-primary)" }}>
                     {r.vendor || "Unknown vendor"}
                   </p>
@@ -1623,7 +2115,7 @@ function CardGrid({
                     );
                   })()}
                 </div>
-                <p className={`font-semibold flex-shrink-0 ${isLarge ? "text-sm" : "text-xs"}`}
+                <p className="font-semibold flex-shrink-0 text-xs"
                   style={{ color: "var(--text-primary)" }}>
                   {r.total || "—"}
                 </p>
@@ -1631,43 +2123,7 @@ function CardGrid({
               <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
                 {r.date || "No date"}
               </p>
-              {isLarge && (
-                <>
-                  <div className="flex items-center gap-2 mt-2 flex-wrap">
-                    {r.category && (
-                      <span className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: cs.bg, color: cs.text }}>
-                        {r.category}
-                      </span>
-                    )}
-                    {r.shareholder_loan && (
-                      <span className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: "rgba(245,158,11,0.15)", color: "var(--accent-amber)" }}>
-                        Shareholder Loan
-                      </span>
-                    )}
-                    {r.recurring && (
-                      <span className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: "rgba(16,185,129,0.12)", color: "var(--accent-green)" }}>
-                        ⟳ Subscription
-                      </span>
-                    )}
-                  </div>
-                  {suggestedSubIds.has(r.id) && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onMarkSub(r.id); }}
-                      className="text-xs px-2 py-0.5 rounded-full font-medium mt-1.5"
-                      style={{ backgroundColor: "rgba(16,185,129,0.12)", color: "var(--accent-green)", border: "1px solid rgba(16,185,129,0.25)" }}
-                    >
-                      ⟳ Mark subscription?
-                    </button>
-                  )}
-                  <p className="text-xs mt-1.5" style={{ color: "var(--text-tertiary)" }}>
-                    Uploaded {fmtUploaded(r.savedAt)}
-                  </p>
-                </>
-              )}
-              {!isLarge && r.category && (
+              {r.category && (
                 <span className="inline-block text-xs px-1.5 py-0.5 rounded-full mt-1.5"
                   style={{ backgroundColor: cs.bg, color: cs.text, fontSize: "10px" }}>
                   {r.category.split(" ")[0]}
@@ -1678,6 +2134,459 @@ function CardGrid({
         );
       })}
     </div>
+  );
+}
+
+// ── Spreadsheet column definitions ────────────────────────────────────────────
+
+type SpreadsheetColDef = {
+  key: string;
+  label: string;
+  width: string;
+  align?: "center";
+  render: (r: SavedReceipt) => React.ReactNode;
+};
+
+const SPREADSHEET_COLS: SpreadsheetColDef[] = [
+  { key: "date",              label: "Date",         width: "80px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.date || "—"}</span> },
+  { key: "vendor",            label: "Vendor",        width: "160px",
+    render: r => <span className="text-xs truncate font-medium" style={{ color: "var(--text-primary)" }}>{r.vendor || "—"}</span> },
+  { key: "subtotal",          label: "Subtotal",      width: "78px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.subtotal || "—"}</span> },
+  { key: "tax",               label: "Tax",           width: "68px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.tax || "—"}</span> },
+  { key: "tax_hst",           label: "HST",           width: "68px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.tax_hst || "—"}</span> },
+  { key: "tax_gst",           label: "GST",           width: "68px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.tax_gst || "—"}</span> },
+  { key: "tax_pst",           label: "PST",           width: "68px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.tax_pst || "—"}</span> },
+  { key: "tip",               label: "Tip",           width: "60px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.tip || "—"}</span> },
+  { key: "tax_rate",          label: "Tax Rate",      width: "68px",
+    render: r => <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{r.tax_rate || "—"}</span> },
+  { key: "total",             label: "Total",         width: "80px",
+    render: r => <span className="text-xs tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>{r.total || "—"}</span> },
+  { key: "category",          label: "Category",      width: "90px",
+    render: r => {
+      if (!r.category) return <span />;
+      const cs = categoryStyle(r.category);
+      const short = r.category.split(" — ")[1] ?? r.category.split(" ")[0];
+      return <span className="text-xs px-1.5 py-0.5 rounded truncate block" style={{ backgroundColor: cs.bg, color: cs.text, fontSize: 10 }}>{short}</span>;
+    } },
+  { key: "business_purpose",  label: "Purpose",       width: "1fr",
+    render: r => <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{r.business_purpose || "—"}</span> },
+  { key: "business_use_pct",  label: "% Use",         width: "52px", align: "center",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.business_use_pct ?? 100}%</span> },
+  { key: "payment_method",    label: "Payment",       width: "80px",
+    render: r => <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{r.payment_method || "—"}</span> },
+  { key: "card_last4",        label: "Card",          width: "72px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.card_last4 ? `•••• ${r.card_last4}` : "—"}</span> },
+  { key: "auth_code",         label: "Auth Code",     width: "72px",
+    render: r => <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{r.auth_code || "—"}</span> },
+  { key: "store_address",     label: "Address",       width: "160px",
+    render: r => <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{r.store_address || "—"}</span> },
+  { key: "store_city",        label: "City",          width: "100px",
+    render: r => <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{r.store_city || "—"}</span> },
+  { key: "store_postal_code", label: "Postal Code",   width: "76px",
+    render: r => <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{r.store_postal_code || "—"}</span> },
+  { key: "store_phone",       label: "Phone",         width: "110px",
+    render: r => <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{r.store_phone || "—"}</span> },
+  { key: "hst_number",        label: "HST #",         width: "130px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.hst_number || "—"}</span> },
+  { key: "receipt_number",    label: "Receipt #",     width: "90px",
+    render: r => <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{r.receipt_number || "—"}</span> },
+  { key: "purchase_time",     label: "Time",          width: "60px",
+    render: r => <span className="text-xs tabular-nums" style={{ color: "var(--text-secondary)" }}>{r.purchase_time || "—"}</span> },
+  { key: "cashier",           label: "Cashier",       width: "80px",
+    render: r => <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{r.cashier || "—"}</span> },
+  { key: "notes",             label: "Notes",         width: "120px",
+    render: r => <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{r.notes || "—"}</span> },
+  { key: "shareholder_loan",  label: "Shareholder Loan", width: "110px", align: "center",
+    render: r => r.shareholder_loan
+      ? <span style={{ fontSize: 9, fontWeight: 700, backgroundColor: "rgba(245,158,11,0.2)", color: "var(--accent-amber)", padding: "1px 4px", borderRadius: 3 }}>SL</span>
+      : <span /> },
+  { key: "recurring",         label: "Recurring",     width: "80px", align: "center",
+    render: r => r.recurring ? <span style={{ color: "var(--accent-green)", fontSize: 12 }}>⟳</span> : <span /> },
+  { key: "ai_confirmed",      label: "AI Status",     width: "72px", align: "center",
+    render: r => r.ai_confirmed === true
+      ? <span style={{ color: "var(--accent-green)", fontSize: 11 }}>✓</span>
+      : r.ai_confirmed === false
+        ? <span style={{ color: "#eab308", fontSize: 9 }}>●</span>
+        : <span /> },
+];
+
+// Date + Vendor are always frozen on the left. Everything else is configurable.
+const FROZEN_KEYS  = ["date", "vendor"];
+// Default scrollable columns (shown on right side of the frozen pane)
+const DEFAULT_SCROLL_KEYS = ["subtotal", "tax", "total", "category", "business_purpose", "business_use_pct"];
+// New key to clear any stale all-columns localStorage from before
+const SPREADSHEET_COLS_KEY = "corpoSpreadsheetCols_v4";
+const COL_WIDTHS_KEY       = "corpoColWidths_v1";
+
+// ── Column picker panel ────────────────────────────────────────────────────────
+
+function ColumnPickerPanel({
+  visibleKeys,
+  onClose,
+  onChange,
+}: {
+  visibleKeys: string[];
+  onClose: () => void;
+  onChange: (keys: string[]) => void;
+}) {
+  // Exclude frozen keys — those are always shown
+  const pickable = SPREADSHEET_COLS.filter(c => !FROZEN_KEYS.includes(c.key));
+  const showing  = pickable.filter(c => visibleKeys.includes(c.key))
+    .sort((a, b) => visibleKeys.indexOf(a.key) - visibleKeys.indexOf(b.key));
+  const available = pickable.filter(c => !visibleKeys.includes(c.key));
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1" onClick={onClose} />
+      <div className="flex flex-col h-full w-72"
+        style={{ backgroundColor: "var(--bg-surface)", borderLeft: "1px solid var(--border)", boxShadow: "-12px 0 40px rgba(0,0,0,0.35)" }}>
+
+        <div className="flex items-center justify-between px-4 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div>
+            <span className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Columns</span>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>Date + Vendor always pinned left</p>
+          </div>
+          <button onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-md text-lg leading-none"
+            style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-elevated)" }}>×</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+
+          {/* Showing → (right side of grid) */}
+          <div className="px-4 pt-4 pb-2">
+            <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--accent-blue)" }}>
+              Showing →
+            </p>
+            {showing.length === 0 && (
+              <p className="text-xs py-2 px-1" style={{ color: "var(--text-secondary)" }}>No extra columns. Add some below.</p>
+            )}
+            {showing.map(c => (
+              <div key={c.key}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg mb-1.5"
+                style={{ backgroundColor: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.18)" }}>
+                <span className="text-sm" style={{ color: "var(--text-primary)" }}>{c.label}</span>
+                <button
+                  onClick={() => onChange(visibleKeys.filter(k => k !== c.key))}
+                  className="text-xs px-2 py-0.5 rounded flex-shrink-0"
+                  style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+                  ← Hide
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Available */}
+          {available.length > 0 && (
+            <div className="px-4 pb-4">
+              <p className="text-xs font-semibold uppercase tracking-wider mb-2 mt-1" style={{ color: "var(--text-secondary)", opacity: 0.7 }}>
+                Available
+              </p>
+              {available.map(c => (
+                <div key={c.key}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg mb-1.5"
+                  style={{ backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+                  <span className="text-sm" style={{ color: "var(--text-secondary)" }}>{c.label}</span>
+                  <button
+                    onClick={() => onChange([...visibleKeys, c.key])}
+                    className="text-xs px-2 py-0.5 rounded flex-shrink-0"
+                    style={{ color: "var(--accent-blue)", backgroundColor: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.25)" }}>
+                    Show →
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 py-3 flex items-center justify-between" style={{ borderTop: "1px solid var(--border)" }}>
+          <button onClick={() => onChange(DEFAULT_SCROLL_KEYS)} className="text-xs" style={{ color: "var(--text-secondary)" }}>
+            Reset defaults
+          </button>
+          <button
+            onClick={() => onChange(SPREADSHEET_COLS.filter(c => !FROZEN_KEYS.includes(c.key)).map(c => c.key))}
+            className="text-xs" style={{ color: "var(--accent-blue)" }}>
+            Show all
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Spreadsheet view ───────────────────────────────────────────────────────────
+
+function SpreadsheetGrid({
+  receipts,
+  onSelect,
+  selectMode,
+  selectedIds,
+  onToggle,
+  getFlags,
+}: {
+  receipts: SavedReceipt[];
+  onSelect: (id: string) => void;
+  selectMode: boolean;
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  getFlags: (r: SavedReceipt) => string[];
+}) {
+  const [scrollKeys, setScrollKeys] = useState<string[]>(DEFAULT_SCROLL_KEYS);
+  const [panelOpen, setPanelOpen]   = useState(false);
+  const [colWidths, setColWidths]   = useState<Record<string, number>>({});
+  const frozenBodyRef = useRef<HTMLDivElement>(null);
+  const scrollBodyRef = useRef<HTMLDivElement>(null);
+  const resizeState   = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SPREADSHEET_COLS_KEY);
+      if (saved) setScrollKeys(JSON.parse(saved));
+      const savedWidths = localStorage.getItem(COL_WIDTHS_KEY);
+      if (savedWidths) setColWidths(JSON.parse(savedWidths));
+    } catch { /* ignore */ }
+  }, []);
+
+  // Global mouse listeners for column resize drag
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!resizeState.current) return;
+      const delta = e.clientX - resizeState.current.startX;
+      const newW  = Math.max(30, resizeState.current.startWidth + delta);
+      setColWidths(prev => ({ ...prev, [resizeState.current!.key]: newW }));
+    }
+    function onMouseUp() {
+      if (!resizeState.current) return;
+      resizeState.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      setColWidths(prev => { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(prev)); return prev; });
+    }
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => { document.removeEventListener("mousemove", onMouseMove); document.removeEventListener("mouseup", onMouseUp); };
+  }, []);
+
+  function updateCols(keys: string[]) {
+    setScrollKeys(keys);
+    localStorage.setItem(SPREADSHEET_COLS_KEY, JSON.stringify(keys));
+  }
+
+  // Sync vertical scroll between frozen and scrollable panes
+  function onScrollRight() {
+    if (frozenBodyRef.current && scrollBodyRef.current)
+      frozenBodyRef.current.scrollTop = scrollBodyRef.current.scrollTop;
+  }
+  function onScrollLeft() {
+    if (frozenBodyRef.current && scrollBodyRef.current)
+      scrollBodyRef.current.scrollTop = frozenBodyRef.current.scrollTop;
+  }
+
+  const frozenCols = SPREADSHEET_COLS.filter(c => FROZEN_KEYS.includes(c.key))
+    .sort((a, b) => FROZEN_KEYS.indexOf(a.key) - FROZEN_KEYS.indexOf(b.key));
+  const activeCols = SPREADSHEET_COLS.filter(c => scrollKeys.includes(c.key))
+    .sort((a, b) => scrollKeys.indexOf(a.key) - scrollKeys.indexOf(b.key));
+
+  // Resolve a column's current width in px (user override → default)
+  function getW(col: SpreadsheetColDef): number {
+    if (colWidths[col.key] !== undefined) return colWidths[col.key];
+    if (col.width.includes("fr")) return 160;
+    const m = col.width.match(/(\d+)/);
+    return m ? parseInt(m[1]) : 100;
+  }
+
+  function startResize(e: React.MouseEvent, col: SpreadsheetColDef) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeState.current = { key: col.key, startX: e.clientX, startWidth: getW(col) };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  // Grid templates
+  const dateCol       = frozenCols.find(c => c.key === "date");
+  const vendorCol     = frozenCols.find(c => c.key === "vendor");
+  const dateW         = dateCol   ? getW(dateCol)   : 80;
+  const vendorW       = vendorCol ? getW(vendorCol) : 160;
+  const leftTemplate  = `28px 16px ${dateW}px ${vendorW}px`;
+  const rightTemplate = activeCols.length > 0 ? activeCols.map(c => `${getW(c)}px`).join(" ") : "1fr";
+
+  const rowHeight = 34;
+  const maxBodyHeight = "calc(70vh - 36px)"; // 70vh minus header row
+
+  const hdrStyle: React.CSSProperties = {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "var(--text-secondary)",
+    backgroundColor: "var(--bg-elevated)",
+    borderBottom: "1px solid var(--border)",
+    height: 36,
+    display: "flex",
+    alignItems: "center",
+    padding: "0 8px",
+    gap: 8,
+  };
+
+  function RowStatus({ r }: { r: SavedReceipt }) {
+    const flags       = getFlags(r);
+    const needsConfirm = r.ai_confirmed === false;
+    const color       = flags.length > 0 ? "#f87171" : needsConfirm ? "#eab308" : null;
+    if (!color) return <span />;
+    return (
+      <div className="relative group/status flex items-center justify-center" style={{ width: 16 }}>
+        <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: color }} />
+        <div className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 z-50 hidden group-hover/status:block" style={{ transform: "translateX(-50%)" }}>
+          <div className="rounded-lg px-2 py-1 text-xs whitespace-nowrap"
+            style={{ backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)", boxShadow: "0 4px 12px rgba(0,0,0,0.4)" }}>
+            {flags.length > 0 ? flags.join(" · ") : "Needs confirmation"}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {panelOpen && (
+        <ColumnPickerPanel
+          visibleKeys={scrollKeys}
+          onClose={() => setPanelOpen(false)}
+          onChange={updateCols}
+        />
+      )}
+
+      {/* Columns button */}
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={() => setPanelOpen(true)}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
+          style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)" }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+          Columns
+          {activeCols.length > 0 && <span style={{ opacity: 0.6 }}>+{activeCols.length}</span>}
+        </button>
+      </div>
+
+      {/* Two-pane layout: frozen left + scrollable right */}
+      <div className="rounded-xl overflow-hidden flex" style={{ border: "1px solid var(--border)", maxHeight: "70vh" }}>
+
+        {/* ── LEFT: frozen pane (Date + Vendor always visible) ── */}
+        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", maxWidth: "50%",
+          borderRight: activeCols.length > 0 ? "2px solid var(--border)" : undefined }}>
+
+          {/* Header */}
+          <div style={{ ...hdrStyle, display: "grid", gridTemplateColumns: leftTemplate, flexShrink: 0 }}>
+            <span />
+            <span />
+            {frozenCols.map(c => (
+              <span key={c.key} style={{ position: "relative", overflow: "visible" }}>
+                {c.label}
+                <div className="col-resize-handle" onMouseDown={(e) => startResize(e, c)} />
+              </span>
+            ))}
+          </div>
+
+          {/* Body */}
+          <div ref={frozenBodyRef} onScroll={onScrollLeft}
+            className="hide-scrollbar"
+            style={{ overflowY: "auto", overflowX: "hidden", maxHeight: maxBodyHeight }}>
+            {receipts.map((r, i) => {
+              const isSelected = selectedIds.has(r.id);
+              return (
+                <div key={r.id}
+                  onClick={() => selectMode ? onToggle(r.id) : onSelect(r.id)}
+                  style={{
+                    display: "grid", gridTemplateColumns: leftTemplate, gap: "8px",
+                    alignItems: "center", padding: "0 8px", height: rowHeight,
+                    backgroundColor: isSelected ? "rgba(59,130,246,0.08)" : i % 2 === 0 ? "var(--bg-surface)" : "var(--bg-base)",
+                    borderBottom: "1px solid var(--border)", cursor: "pointer",
+                  }}
+                >
+                  {/* Checkbox */}
+                  <div className="flex items-center justify-center"
+                    onClick={(e) => { e.stopPropagation(); onToggle(r.id); }}>
+                    <div style={{
+                      width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                      border: isSelected ? "none" : "1.5px solid var(--border)",
+                      backgroundColor: isSelected ? "var(--accent-blue)" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {isSelected && (
+                        <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+                          <polyline points="2,6 5,9 10,3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                  {/* Status */}
+                  <RowStatus r={r} />
+                  {/* Frozen data columns */}
+                  {frozenCols.map(c => (
+                    <div key={c.key} style={{ overflow: "hidden", display: "flex", alignItems: "center" }}>
+                      {c.render(r)}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── RIGHT: scrollable pane (configurable columns) ── */}
+        {activeCols.length > 0 && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+            {/* Header */}
+            <div style={{ ...hdrStyle, display: "grid", gridTemplateColumns: rightTemplate, flexShrink: 0, overflowX: "hidden" }}>
+              {activeCols.map(c => (
+                <span key={c.key} className={c.align === "center" ? "text-center" : ""}
+                  style={{ position: "relative", overflow: "visible", zIndex: 1 }}>
+                  {c.label}
+                  <div className="col-resize-handle" onMouseDown={(e) => startResize(e, c)} />
+                </span>
+              ))}
+            </div>
+            {/* Body */}
+            <div ref={scrollBodyRef} onScroll={onScrollRight}
+              style={{ overflowY: "auto", overflowX: "auto", maxHeight: maxBodyHeight, flex: 1 }}>
+              <div style={{ minWidth: activeCols.map(c => getW(c)).reduce((a, b) => a + b, 0) + "px" }}>
+                {receipts.map((r, i) => {
+                  const isSelected = selectedIds.has(r.id);
+                  return (
+                    <div key={r.id}
+                      onClick={() => selectMode ? onToggle(r.id) : onSelect(r.id)}
+                      style={{
+                        display: "grid", gridTemplateColumns: rightTemplate, gap: "8px",
+                        alignItems: "center", padding: "0 8px", height: rowHeight,
+                        backgroundColor: isSelected ? "rgba(59,130,246,0.08)" : i % 2 === 0 ? "var(--bg-surface)" : "var(--bg-base)",
+                        borderBottom: "1px solid var(--border)", cursor: "pointer",
+                      }}
+                    >
+                      {activeCols.map(c => (
+                        <div key={c.key}
+                          style={{ overflow: "hidden", display: "flex", alignItems: "center", justifyContent: c.align === "center" ? "center" : "flex-start" }}>
+                          {c.render(r)}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1770,6 +2679,17 @@ function SummaryBar({ receipts }: { receipts: SavedReceipt[] }) {
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <span className="text-xs font-semibold tracking-wider uppercase" style={{ color: "var(--text-secondary)", opacity: 0.6 }}>
+        {children}
+      </span>
+      <div className="flex-1" style={{ height: 1, backgroundColor: "var(--border)" }} />
+    </div>
+  );
+}
+
 function Row({ label, value }: { label: string; value: string }) {
   if (!value) return null;
   return (
@@ -1780,11 +2700,179 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+function EditParsedDetails({
+  meta, onUpdate, inputStyle,
+}: {
+  meta: EditMeta;
+  onUpdate: (field: keyof EditMeta, value: string) => void;
+  inputStyle: React.CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  function MI({ label, k }: { label: string; k: keyof EditMeta }) {
+    return (
+      <div>
+        <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{label}</p>
+        <input type="text" value={meta[k]} placeholder="—" onChange={e => onUpdate(k, e.target.value)}
+          className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none" style={inputStyle} />
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium"
+        style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-elevated)" }}>
+        <span>Parsed Details</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div className="p-3 flex flex-col gap-3" style={{ backgroundColor: "var(--bg-base)" }}>
+          <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Store</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div style={{ gridColumn: "span 2" }}><MI label="Address" k="store_address" /></div>
+            <MI label="City" k="store_city" />
+            <MI label="Postal Code" k="store_postal_code" />
+            <MI label="Phone" k="store_phone" />
+            <MI label="HST Registration #" k="hst_number" />
+          </div>
+          <p className="text-xs font-semibold mt-1" style={{ color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Transaction</p>
+          <div className="grid grid-cols-3 gap-2">
+            <MI label="Receipt #" k="receipt_number" />
+            <MI label="Time" k="purchase_time" />
+            <MI label="Cashier" k="cashier" />
+          </div>
+          <p className="text-xs font-semibold mt-1" style={{ color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Payment</p>
+          <div className="grid grid-cols-3 gap-2">
+            <MI label="Method" k="payment_method" />
+            <MI label="Card Last 4" k="card_last4" />
+            <MI label="Auth Code" k="auth_code" />
+          </div>
+          <p className="text-xs font-semibold mt-1" style={{ color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Tax Breakdown</p>
+          <div className="grid grid-cols-3 gap-2">
+            <MI label="HST" k="tax_hst" />
+            <MI label="GST" k="tax_gst" />
+            <MI label="PST" k="tax_pst" />
+            <MI label="Tip" k="tip" />
+            <MI label="Tax Rate" k="tax_rate" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
       <label className="block text-xs mb-1.5 font-medium" style={{ color: "var(--text-secondary)" }}>{label}</label>
       {children}
+    </div>
+  );
+}
+
+function pad(label: string, width = 18): string {
+  return label.padEnd(width);
+}
+
+function SavedReceiptText({ r }: { r: SavedReceipt }) {
+  const W = 46;
+  const div = "─".repeat(W);
+  const lines: string[] = [];
+
+  lines.push("VENDOR");
+  lines.push(div);
+  if (r.vendor)            lines.push(`${pad("Name")}${r.vendor}`);
+  if (r.store_address)     lines.push(`${pad("Address")}${r.store_address}`);
+  if (r.store_city)        lines.push(`${pad("City")}${r.store_city}`);
+  if (r.store_postal_code) lines.push(`${pad("Postal Code")}${r.store_postal_code}`);
+  if (r.store_phone)       lines.push(`${pad("Phone")}${r.store_phone}`);
+  if (r.hst_number)        lines.push(`${pad("HST #")}${r.hst_number}`);
+
+  lines.push("");
+  lines.push("TRANSACTION");
+  lines.push(div);
+  if (r.date)              lines.push(`${pad("Date")}${r.date}`);
+  if (r.purchase_time)     lines.push(`${pad("Time")}${r.purchase_time}`);
+  if (r.receipt_number)    lines.push(`${pad("Receipt #")}${r.receipt_number}`);
+  if (r.cashier)           lines.push(`${pad("Cashier")}${r.cashier}`);
+
+  if (r.payment_method || r.card_last4 || r.auth_code) {
+    lines.push("");
+    lines.push("PAYMENT");
+    lines.push(div);
+    if (r.payment_method)  lines.push(`${pad("Method")}${r.payment_method}`);
+    if (r.card_last4)      lines.push(`${pad("Card")}•••• ${r.card_last4}`);
+    if (r.auth_code)       lines.push(`${pad("Auth Code")}${r.auth_code}`);
+  }
+
+  if (r.line_items && r.line_items.length > 0) {
+    lines.push("");
+    lines.push("LINE ITEMS");
+    lines.push(div);
+    r.line_items.forEach((item, i) => {
+      const num = `${i + 1}.`.padEnd(4);
+      lines.push(`${num}${item.description || "—"}${item.amount ? "  " + item.amount : ""}`);
+      const meta: string[] = [];
+      if (item.qty)        meta.push(`Qty: ${item.qty}`);
+      if (item.unit_price) meta.push(`@ ${item.unit_price}`);
+      if (item.sku)        meta.push(`SKU: ${item.sku}`);
+      if (meta.length)     lines.push(`    ${meta.join("   ")}`);
+    });
+  }
+
+  lines.push("");
+  lines.push("TOTALS");
+  lines.push(div);
+  if (r.subtotal)  lines.push(`${pad("Subtotal")}${r.subtotal}`);
+  if (r.tax_hst)   lines.push(`${pad("HST")}${r.tax_hst}${r.tax_rate ? `  (${r.tax_rate})` : ""}`);
+  if (r.tax_gst)   lines.push(`${pad("GST")}${r.tax_gst}`);
+  if (r.tax_pst)   lines.push(`${pad("PST")}${r.tax_pst}`);
+  if (!r.tax_hst && !r.tax_gst && r.tax) lines.push(`${pad("Tax")}${r.tax}${r.tax_rate ? `  (${r.tax_rate})` : ""}`);
+  if (r.tip)       lines.push(`${pad("Tip")}${r.tip}`);
+  lines.push(`${pad("TOTAL")}${r.total || "—"}`);
+
+  lines.push("");
+  lines.push("CLASSIFICATION");
+  lines.push(div);
+  if (r.category)          lines.push(`${pad("Category")}${r.category}`);
+  if (r.business_purpose)  lines.push(`${pad("Purpose")}${r.business_purpose}`);
+  lines.push(`${pad("% Business Use")}${r.business_use_pct ?? 100}%`);
+
+  return <>{lines.join("\n")}</>;
+}
+
+function SavedReceiptDetails({ r }: { r: SavedReceipt }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium"
+        style={{ color: "var(--text-secondary)", backgroundColor: "var(--bg-elevated)" }}
+      >
+        <span>Full Receipt Text</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <pre className="px-4 py-3 text-xs leading-relaxed overflow-x-auto"
+          style={{
+            fontFamily: "ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace",
+            color: "var(--text-primary)",
+            backgroundColor: "var(--bg-base)",
+            whiteSpace: "pre",
+            margin: 0,
+          }}>
+          <SavedReceiptText r={r} />
+        </pre>
+      )}
     </div>
   );
 }

@@ -19,11 +19,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
-        {/* Prevent flash of wrong theme on load */}
+        {/* Prevent flash of wrong theme / nav layout on load */}
         <script dangerouslySetInnerHTML={{ __html: `
           try {
             var t = localStorage.getItem("corpo-theme");
             if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+          } catch(e) {}
+          try {
+            var s = JSON.parse(localStorage.getItem("corpoAppSettings") || "{}");
+            if (s.navStyle === "sidebar") {
+              document.documentElement.style.setProperty("--nav-h", "0px");
+              document.documentElement.style.setProperty("--sidebar-w", "220px");
+            }
           } catch(e) {}
         ` }} />
       </head>

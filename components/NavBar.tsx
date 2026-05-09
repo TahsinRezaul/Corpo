@@ -254,8 +254,6 @@ export default function NavBar() {
     setModules(loadModules());
   }, [launcherOpen]);
 
-  if (path === "/") return null;
-
   const currentMod = modules.find(m => path.startsWith(m.href)) ?? NAV_TABS.find(t => path.startsWith(t.href));
   const isSettings = path.startsWith("/settings");
 

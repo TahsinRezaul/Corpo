@@ -68,14 +68,15 @@ const BUILT_IN_ICONS: Record<string, (p: IP) => React.ReactElement> = {
 // ═══════════════════════════════════════════════════════════════
 
 export const DEFAULT_MODULES: ModuleEntry[] = [
-  { id: "/receipts", href: "/receipts", label: "Receipts",          emoji: null, hidden: false, custom: false },
-  { id: "/invoices", href: "/invoices", label: "Invoices",          emoji: null, hidden: false, custom: false },
-  { id: "/income",   href: "/income",   label: "Income & P&L",      emoji: null, hidden: false, custom: false },
-  { id: "/mileage",  href: "/mileage",  label: "Mileage Log",       emoji: null, hidden: false, custom: false },
-  { id: "/hst",      href: "/hst",      label: "HST Report",        emoji: null, hidden: false, custom: false },
-  { id: "/money",    href: "/money",    label: "Money Mgmt",        emoji: null, hidden: false, custom: false },
-  { id: "/loan",     href: "/loan",     label: "Shareholder Loan",  emoji: null, hidden: false, custom: false },
-  { id: "/tax",      href: "/tax",      label: "Tax Planner",       emoji: null, hidden: false, custom: false },
+  { id: "/receipts",   href: "/receipts",   label: "Receipts",            emoji: null, hidden: false, custom: false },
+  { id: "/invoices",   href: "/invoices",   label: "Invoices",            emoji: null, hidden: false, custom: false },
+  { id: "/income",     href: "/income",     label: "Income & P&L",        emoji: null, hidden: false, custom: false },
+  { id: "/mileage",    href: "/mileage",    label: "Mileage Log",         emoji: null, hidden: false, custom: false },
+  { id: "/hst",        href: "/hst",        label: "HST Report",          emoji: null, hidden: false, custom: false },
+  { id: "/money",      href: "/money",      label: "Money Mgmt",          emoji: null, hidden: false, custom: false },
+  { id: "/loan",       href: "/loan",       label: "Shareholder Loan",    emoji: null, hidden: false, custom: false },
+  { id: "/tax",        href: "/tax",        label: "Tax Planner",         emoji: null, hidden: false, custom: false },
+  { id: "/accountant", href: "/accountant", label: "Accountant Reports",  emoji: null, hidden: false, custom: false },
 ];
 
 // ═══════════════════════════════════════════════════════════════

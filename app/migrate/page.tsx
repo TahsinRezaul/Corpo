@@ -210,6 +210,7 @@ function rowToReceipt(row: Record<string, string>, map: ColumnMap): SavedReceipt
     thumbnail:        "",
     recurring:        false,
     recurringInterval: "",
+    business_use_pct: 100,
   };
 }
 

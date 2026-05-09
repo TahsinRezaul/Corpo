@@ -3,15 +3,13 @@
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useTheme, ThemeToggle, NAV_TABS } from "@/components/NavBar";
-import UserMenu from "@/components/UserMenu";
+import { useTheme, NAV_TABS } from "@/components/NavBar";
 import ModuleLauncher, {
   loadAll, saveAll,
   type ModuleEntry, type GridEntry, type Folder,
   TileIcon, TileEditSheet, IconPicker,
 } from "@/components/ModuleLauncher";
-import { getSaved, getIncome, getMileage } from "@/lib/storage";
-import CorpoMark from "@/components/CorpoMark";
+import { getSaved, getIncome, getMileage, recordAiUsage, getAiUsageSummary, resetAiUsage } from "@/lib/storage";
 
 // ── Quick stats ────────────────────────────────────────────────────────────────
 
@@ -125,13 +123,18 @@ const SUGGESTIONS = [
   { label: "Export for accountant", prompt: "Generate accountant report" },
 ];
 
+type UsageSummary = ReturnType<typeof getAiUsageSummary>;
+
 function AssistantChat({ isDark, stats }: { isDark: boolean; stats: Stats | null }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(false);
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setUsage(getAiUsageSummary()); }, []);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -153,6 +156,10 @@ function AssistantChat({ isDark, stats }: { isDark: boolean; stats: Stats | null
       const data = await res.json();
       const reply = data.message ?? "Done.";
       setMessages(m => [...m, { role: "agent", text: reply }]);
+      if (data._usage) {
+        recordAiUsage(data._usage.promptTokens, data._usage.completionTokens);
+        setUsage(getAiUsageSummary());
+      }
       if (data.action === "navigate" && data.path) {
         setTimeout(() => router.push(data.path), 600);
       }
@@ -291,6 +298,43 @@ function AssistantChat({ isDark, stats }: { isDark: boolean; stats: Stats | null
           </button>
         ))}
       </div>
+
+      {/* AI usage meter */}
+      {usage && (usage.today.requests > 0 || usage.month.requests > 0) && (
+        <div
+          className="flex items-center justify-between px-3 py-2 rounded-xl"
+          style={{
+            backgroundColor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)",
+            border: `1px solid ${borderColor}`,
+          }}
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <span className="text-xs" style={{ color: phColor, lineHeight: 1.3 }}>Today</span>
+              <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                {usage.today.requests} req · {usage.today.tokens.toLocaleString()} tokens
+              </span>
+            </div>
+            <div style={{ width: 1, height: 24, backgroundColor: borderColor }} />
+            <div className="flex flex-col">
+              <span className="text-xs" style={{ color: phColor, lineHeight: 1.3 }}>This month</span>
+              <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                {usage.month.requests} req · {usage.month.tokens.toLocaleString()} tokens
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => { resetAiUsage(); setUsage(getAiUsageSummary()); }}
+            className="text-xs px-2 py-1 rounded-lg transition-colors"
+            style={{ color: phColor, border: `1px solid ${borderColor}` }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--text-primary)")}
+            onMouseLeave={e => (e.currentTarget.style.color = phColor)}
+            title="Reset usage counters"
+          >
+            Reset
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -590,9 +634,8 @@ function HomeTiles({
 // ── Home page ──────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const { theme, toggle } = useTheme();
+  const { theme } = useTheme();
   const isDark = theme === "dark";
-  const [searchOpen,   setSearchOpen]   = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [editMode,     setEditMode]     = useState(false);
   const [stats,        setStats]        = useState<Stats | null>(null);
@@ -607,48 +650,8 @@ export default function HomePage() {
   const dividerColor = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
 
   return (
-    <div
-      className="flex flex-col"
-      style={{ marginTop: "-52px", minHeight: "100vh", backgroundColor: "var(--bg-base)" }}
-    >
-      {searchOpen && <SearchOverlay onClose={() => setSearchOpen(false)} />}
+    <div className="flex flex-col" style={{ minHeight: "100vh", backgroundColor: "var(--bg-base)" }}>
       <ModuleLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} />
-
-      {/* Top bar */}
-      <header
-        className="flex items-center justify-between px-5 py-3"
-        style={{ borderBottom: "1px solid var(--border)" }}
-      >
-        <div className="flex items-center gap-2.5">
-          <CorpoMark size={24} isDark={isDark} />
-          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.22em", color: "var(--text-primary)" }}>
-            CORPO
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setSearchOpen(true)}
-            className="flex items-center justify-center rounded-xl"
-            style={{ width: 34, height: 34, backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-          </button>
-          <Link
-            href="/settings"
-            className="flex items-center justify-center rounded-xl"
-            style={{ width: 34, height: 34, backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-          </Link>
-          <ThemeToggle theme={theme} toggle={toggle} />
-          <UserMenu />
-        </div>
-      </header>
 
       {/* Main */}
       <main className="flex-1 flex flex-col items-center px-5 py-8 gap-8 w-full max-w-2xl mx-auto">

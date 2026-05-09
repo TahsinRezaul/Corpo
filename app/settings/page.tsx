@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getSettings, saveSettings, type AppSettings, DEFAULT_LOCATION_BIAS, type LocationBias } from "@/lib/storage";
+import { getSettings, saveSettings, type AppSettings, DEFAULT_SETTINGS, DEFAULT_LOCATION_BIAS, type LocationBias } from "@/lib/storage";
 import { requestBrowserPermission, getBrowserPermission } from "@/lib/notifications";
 import AddressInput, { resolvePlaceDetails, type PlaceResult } from "@/components/AddressInput";
 import PageHelp from "@/components/PageHelp";
@@ -288,7 +288,7 @@ type ClearStep = "idle" | "warn" | "type" | "confirm";
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("general");
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
   const [clearStep, setClearStep] = useState<ClearStep>("idle");
   const [clearInput, setClearInput] = useState("");
@@ -299,10 +299,12 @@ export default function SettingsPage() {
 
   useEffect(() => { setSettings(getSettings()); }, []);
 
-  if (!settings) return null;
-
   function patch(p: Partial<AppSettings>) {
-    setSettings(s => s ? { ...s, ...p } : s);
+    setSettings(s => ({ ...s, ...p }));
+    if ("navStyle" in p) {
+      saveSettings({ ...settings, ...p });
+      window.dispatchEvent(new CustomEvent("corpo-nav-style-changed", { detail: p.navStyle }));
+    }
   }
 
   function handleSave() {
@@ -362,6 +364,30 @@ export default function SettingsPage() {
       {tab === "general" && (
         <div>
           <SectionHeader>Display</SectionHeader>
+
+          <SettingRow label="Navigation Style" hint="List = top tab bar · Sidebar = VS Code-style left panel · Grid = tile launcher">
+            <div className="flex rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+              {([
+                { value: "list",    label: "Tabs" },
+                { value: "sidebar", label: "Sidebar" },
+                { value: "fiori",   label: "Grid" },
+              ] as { value: AppSettings["navStyle"]; label: string }[]).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => patch({ navStyle: opt.value })}
+                  className="px-4 py-1.5 text-sm"
+                  style={{
+                    backgroundColor: settings.navStyle === opt.value ? "var(--accent-blue)" : "var(--bg-elevated)",
+                    color: settings.navStyle === opt.value ? "#fff" : "var(--text-secondary)",
+                    border: "none",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </SettingRow>
+
           <SettingRow label="Date Format" hint="How dates appear throughout the app">
             <Select value={settings.dateFormat} onChange={(v) => patch({ dateFormat: v as AppSettings["dateFormat"] })}
               options={[
