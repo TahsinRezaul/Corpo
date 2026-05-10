@@ -55,6 +55,12 @@ const providers = [
     ? [Google({
         clientId: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        authorization: {
+          params: {
+            scope: "openid email profile https://www.googleapis.com/auth/drive.appdata",
+            access_type: "offline",
+          },
+        },
       })]
     : []),
 
@@ -84,14 +90,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async signIn({ user, account }) {
       if (account && (account.provider === "google" || account.provider === "apple" || account.provider === "microsoft-entra-id")) {
         if (!user.email) return false;
-        // Best-effort local file upsert; do NOT use dbUser.id — we want the provider's
-        // sub (token.sub) as the stable Firestore key so it works on both localhost and Vercel.
         try { upsertOAuthUser(user.email, user.name ?? user.email); } catch {}
       }
       return true;
     },
+    async jwt({ token, account }) {
+      if (account?.provider === "google" && account.access_token) {
+        token.googleAccessToken = account.access_token;
+      }
+      return token;
+    },
     async session({ session, token }) {
       if (token.sub) session.user.id = token.sub;
+      if (typeof token.googleAccessToken === "string") session.googleAccessToken = token.googleAccessToken;
       return session;
     },
   },

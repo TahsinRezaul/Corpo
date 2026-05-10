@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { getSettings, saveSettings, type AppSettings, DEFAULT_SETTINGS, DEFAULT_LOCATION_BIAS, type LocationBias } from "@/lib/storage";
 import { requestBrowserPermission, getBrowserPermission } from "@/lib/notifications";
 import AddressInput, { resolvePlaceDetails, type PlaceResult } from "@/components/AddressInput";
 import PageHelp from "@/components/PageHelp";
 import { PAGE_HELP } from "@/lib/page-help-content";
+import { driveUpload, driveDownload } from "@/lib/drive-sync";
 
 type Tab = "general" | "invoices" | "receipts" | "mileage" | "tax" | "ai" | "notifications";
 
@@ -291,8 +293,12 @@ const SYNC_KEYS = [
 ];
 
 function CloudSyncRow() {
+  const { data: session } = useSession();
   const [upStatus, setUpStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
   const [downStatus, setDownStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
+
+  const googleToken = session?.googleAccessToken;
+  const storageLabel = googleToken ? "Google Drive" : "Cloud";
 
   async function uploadNow() {
     setUpStatus("syncing");
@@ -302,12 +308,18 @@ function CloudSyncRow() {
         const raw = localStorage.getItem(key);
         if (raw) { try { data[key] = JSON.parse(raw); } catch {} }
       }
-      const res = await fetch("/api/userdata/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      setUpStatus(res.ok ? "done" : "error");
+      let ok: boolean;
+      if (googleToken) {
+        ok = await driveUpload(googleToken, data);
+      } else {
+        const res = await fetch("/api/userdata/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        ok = res.ok;
+      }
+      setUpStatus(ok ? "done" : "error");
     } catch {
       setUpStatus("error");
     }
@@ -317,14 +329,18 @@ function CloudSyncRow() {
   async function downloadNow() {
     setDownStatus("syncing");
     try {
-      const res = await fetch("/api/userdata");
-      if (!res.ok) {
-        console.warn("[Download] /api/userdata returned", res.status);
+      let data: Record<string, unknown> | null = null;
+      if (googleToken) {
+        data = await driveDownload(googleToken);
+      } else {
+        const res = await fetch("/api/userdata");
+        if (res.ok) data = await res.json() as Record<string, unknown>;
+      }
+      if (!data) {
         setDownStatus("error");
         setTimeout(() => setDownStatus("idle"), 3000);
         return;
       }
-      const data = await res.json() as Record<string, unknown>;
       let wrote = 0;
       for (const key of SYNC_KEYS) {
         if (key in data && data[key] !== null && data[key] !== undefined) {
@@ -358,10 +374,21 @@ function CloudSyncRow() {
 
   return (
     <>
-      <SettingRow label="Upload to Cloud" hint="Push all data from this device to Firestore (do this on your main device)">
+      {!googleToken && session && (
+        <div className="py-3 px-4 rounded-lg text-xs" style={{ color: "var(--text-secondary)", backgroundColor: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)" }}>
+          Sign out and sign back in with Google to activate Drive sync.
+        </div>
+      )}
+      <SettingRow
+        label={`Upload to ${storageLabel}`}
+        hint={googleToken ? "Save all data from this device to your Google Drive (hidden app folder)" : "Push all data from this device to cloud storage"}
+      >
         {btn(upStatus, "Upload now", "Uploading…", "Uploaded ✓", "Failed ✗", uploadNow)}
       </SettingRow>
-      <SettingRow label="Download from Cloud" hint="Pull data from Firestore into this device (do this on a new device after logging in)">
+      <SettingRow
+        label={`Download from ${storageLabel}`}
+        hint={googleToken ? "Restore data from Google Drive onto this device" : "Pull data from cloud storage to this device"}
+      >
         {btn(downStatus, "Download now", "Downloading…", "Done — reloading…", "Failed ✗", downloadNow)}
       </SettingRow>
     </>
