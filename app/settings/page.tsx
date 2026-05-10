@@ -318,18 +318,26 @@ function CloudSyncRow() {
     setDownStatus("syncing");
     try {
       const res = await fetch("/api/userdata");
-      if (!res.ok) { setDownStatus("error"); return; }
+      if (!res.ok) {
+        console.warn("[Download] /api/userdata returned", res.status);
+        setDownStatus("error");
+        setTimeout(() => setDownStatus("idle"), 3000);
+        return;
+      }
       const data = await res.json() as Record<string, unknown>;
+      let wrote = 0;
       for (const key of SYNC_KEYS) {
         if (key in data && data[key] !== null && data[key] !== undefined) {
-          try { localStorage.setItem(key, JSON.stringify(data[key])); } catch {}
+          try { localStorage.setItem(key, JSON.stringify(data[key])); wrote++; } catch {}
         }
       }
-      sessionStorage.removeItem("corpo-data-loaded");
+      console.log(`[Download] wrote ${wrote} keys to localStorage`);
       setDownStatus("done");
       setTimeout(() => window.location.reload(), 800);
-    } catch {
+    } catch (e) {
+      console.error("[Download] error", e);
       setDownStatus("error");
+      setTimeout(() => setDownStatus("idle"), 3000);
     }
   }
 

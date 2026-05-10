@@ -30,8 +30,7 @@ function readLocalData(): Record<string, unknown> {
   return out;
 }
 
-function hasLocalData(data: Record<string, unknown>): boolean {
-  // Check if there's meaningful data (non-empty arrays or objects)
+function hasMeaningfulData(data: Record<string, unknown>): boolean {
   for (const key of SYNC_KEYS) {
     const v = data[key];
     if (Array.isArray(v) && v.length > 0) return true;
@@ -44,43 +43,51 @@ export default function DataLoader() {
   const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (status !== "authenticated" || !session?.user) return;
+    if (status !== "authenticated" || !session?.user?.id) return;
 
-    const flag = sessionStorage.getItem("corpo-data-loaded");
-    if (flag) return;
+    const flagKey = `corpo-loaded:${session.user.id}`;
+    if (sessionStorage.getItem(flagKey)) return;
 
-    // Mark as loaded immediately to prevent double-runs
-    sessionStorage.setItem("corpo-data-loaded", "1");
+    // Set flag immediately to prevent double-runs within this session
+    sessionStorage.setItem(flagKey, "1");
 
-    fetch("/api/userdata")
-      .then(r => r.ok ? r.json() : null)
-      .then(async (serverData: Record<string, unknown> | null) => {
-        if (!serverData) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/userdata");
+        if (!res.ok) {
+          console.warn("[DataLoader] /api/userdata returned", res.status);
+          return;
+        }
+        const serverData = await res.json() as Record<string, unknown>;
 
-        const serverHasData = hasLocalData(serverData);
-        const localData = readLocalData();
-        const localHasData = hasLocalData(localData);
-
-        if (serverHasData) {
-          // Server has data → restore into localStorage and reload
+        if (hasMeaningfulData(serverData)) {
+          // Cloud has data → restore to localStorage then reload so every page reads it
+          console.log("[DataLoader] restoring from cloud");
           for (const key of SYNC_KEYS) {
             if (key in serverData && serverData[key] !== null && serverData[key] !== undefined) {
               try { localStorage.setItem(key, JSON.stringify(serverData[key])); } catch {}
             }
           }
           window.location.reload();
-        } else if (localHasData) {
-          // Server is empty but local has data → upload local data to Firestore
-          await fetch("/api/userdata/batch", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(localData),
-          }).catch(() => {});
-          // No reload needed — local data is already loaded
+        } else {
+          const localData = readLocalData();
+          if (hasMeaningfulData(localData)) {
+            // Cloud is empty but we have local data → upload it
+            console.log("[DataLoader] uploading local data to cloud");
+            await fetch("/api/userdata/batch", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(localData),
+            });
+          } else {
+            console.log("[DataLoader] no data in cloud or local");
+          }
         }
-      })
-      .catch(() => {});
-  }, [status, session]);
+      } catch (e) {
+        console.error("[DataLoader] error", e);
+      }
+    })();
+  }, [status, session?.user?.id]);
 
   return null;
 }

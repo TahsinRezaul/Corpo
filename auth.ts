@@ -84,12 +84,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async signIn({ user, account }) {
       if (account && (account.provider === "google" || account.provider === "apple" || account.provider === "microsoft-entra-id")) {
         if (!user.email) return false;
-        try {
-          const dbUser = upsertOAuthUser(user.email, user.name ?? user.email);
-          user.id = dbUser.id;
-        } catch {
-          // Vercel has a read-only filesystem — writes fail but login should still succeed
-        }
+        // Best-effort local file upsert; do NOT use dbUser.id — we want the provider's
+        // sub (token.sub) as the stable Firestore key so it works on both localhost and Vercel.
+        try { upsertOAuthUser(user.email, user.name ?? user.email); } catch {}
       }
       return true;
     },
