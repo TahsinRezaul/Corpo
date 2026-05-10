@@ -11,6 +11,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
     "@napi-rs/canvas": "^0.1.97",
+    "firebase": "^12.13.0",
+    "firebase-admin": "^13.9.0",
     "google-auth-library": "^10.6.2",
     "heic-convert": "^2.1.0",
     "jspdf": "^4.2.1",

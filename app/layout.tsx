@@ -8,6 +8,7 @@ import DataSync from "@/components/DataSync";
 import { SessionProvider } from "next-auth/react";
 import { BackgroundTasksProvider } from "@/contexts/BackgroundTasksContext";
 import NotificationCheck from "@/components/NotificationCheck";
+import DataLoader from "@/components/DataLoader";
 
 export const metadata: Metadata = {
   title: "CORPO",
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <BackgroundTasksProvider>
           <SessionProvider>
             <DataSync />
+            <DataLoader />
             <NotificationCheck />
             <ConditionalNavBar />
             <BackgroundParser />
