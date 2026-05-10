@@ -282,6 +282,54 @@ function LocationBiasSection({ settings, patch }: { settings: AppSettings; patch
   );
 }
 
+// ── Cloud Sync ────────────────────────────────────────────────────────────────
+
+const SYNC_KEYS = [
+  "savedReceipts","pendingReceipts","corpoIncome","corpoMileage","corpoLoan",
+  "corpoInvoices","corpoBusinessProfile","corpoInvoiceTemplates","corpoAppSettings",
+  "corpoTaxRates","corpoOffice","corpoOdometer","dismissedNotifs",
+];
+
+function CloudSyncRow() {
+  const [status, setStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
+
+  async function uploadNow() {
+    setStatus("syncing");
+    try {
+      const data: Record<string, unknown> = {};
+      for (const key of SYNC_KEYS) {
+        const raw = localStorage.getItem(key);
+        if (raw) { try { data[key] = JSON.parse(raw); } catch {} }
+      }
+      const res = await fetch("/api/userdata/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      setStatus(res.ok ? "done" : "error");
+      if (res.ok) sessionStorage.removeItem("corpo-data-loaded");
+    } catch {
+      setStatus("error");
+    }
+    setTimeout(() => setStatus("idle"), 3000);
+  }
+
+  return (
+    <SettingRow label="Sync to Cloud" hint="Upload all local data to Firestore so other devices can access it">
+      <button onClick={uploadNow} disabled={status === "syncing"}
+        className="px-4 py-1.5 text-sm rounded-lg font-medium"
+        style={{
+          backgroundColor: status === "done" ? "rgba(16,185,129,0.15)" : status === "error" ? "rgba(248,113,113,0.15)" : "rgba(59,130,246,0.1)",
+          color: status === "done" ? "#10b981" : status === "error" ? "#f87171" : "var(--accent-blue)",
+          border: `1px solid ${status === "done" ? "rgba(16,185,129,0.3)" : status === "error" ? "rgba(248,113,113,0.3)" : "rgba(59,130,246,0.25)"}`,
+          opacity: status === "syncing" ? 0.6 : 1,
+        }}>
+        {status === "syncing" ? "Uploading…" : status === "done" ? "Synced ✓" : status === "error" ? "Failed ✗" : "Upload now"}
+      </button>
+    </SettingRow>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 type ClearStep = "idle" | "warn" | "type" | "confirm";
@@ -426,6 +474,9 @@ export default function SettingsPage() {
                 { value: "DD/MM/YYYY", label: "DD/MM/YYYY (EU)" },
               ]} />
           </SettingRow>
+
+          <SectionHeader>Cloud Sync</SectionHeader>
+          <CloudSyncRow />
 
           <SectionHeader>Business</SectionHeader>
           <SettingRow label="Province / Territory" hint="Used for tax calculations and HST rates">
