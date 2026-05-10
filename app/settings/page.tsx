@@ -291,10 +291,11 @@ const SYNC_KEYS = [
 ];
 
 function CloudSyncRow() {
-  const [status, setStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
+  const [upStatus, setUpStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
+  const [downStatus, setDownStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
 
   async function uploadNow() {
-    setStatus("syncing");
+    setUpStatus("syncing");
     try {
       const data: Record<string, unknown> = {};
       for (const key of SYNC_KEYS) {
@@ -306,17 +307,35 @@ function CloudSyncRow() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      setStatus(res.ok ? "done" : "error");
-      if (res.ok) sessionStorage.removeItem("corpo-data-loaded");
+      setUpStatus(res.ok ? "done" : "error");
     } catch {
-      setStatus("error");
+      setUpStatus("error");
     }
-    setTimeout(() => setStatus("idle"), 3000);
+    setTimeout(() => setUpStatus("idle"), 3000);
   }
 
-  return (
-    <SettingRow label="Sync to Cloud" hint="Upload all local data to Firestore so other devices can access it">
-      <button onClick={uploadNow} disabled={status === "syncing"}
+  async function downloadNow() {
+    setDownStatus("syncing");
+    try {
+      const res = await fetch("/api/userdata");
+      if (!res.ok) { setDownStatus("error"); return; }
+      const data = await res.json() as Record<string, unknown>;
+      for (const key of SYNC_KEYS) {
+        if (key in data && data[key] !== null && data[key] !== undefined) {
+          try { localStorage.setItem(key, JSON.stringify(data[key])); } catch {}
+        }
+      }
+      sessionStorage.removeItem("corpo-data-loaded");
+      setDownStatus("done");
+      setTimeout(() => window.location.reload(), 800);
+    } catch {
+      setDownStatus("error");
+    }
+  }
+
+  function btn(status: typeof upStatus, label: string, syncing: string, done: string, error: string, onClick: () => void) {
+    return (
+      <button onClick={onClick} disabled={status === "syncing"}
         className="px-4 py-1.5 text-sm rounded-lg font-medium"
         style={{
           backgroundColor: status === "done" ? "rgba(16,185,129,0.15)" : status === "error" ? "rgba(248,113,113,0.15)" : "rgba(59,130,246,0.1)",
@@ -324,9 +343,20 @@ function CloudSyncRow() {
           border: `1px solid ${status === "done" ? "rgba(16,185,129,0.3)" : status === "error" ? "rgba(248,113,113,0.3)" : "rgba(59,130,246,0.25)"}`,
           opacity: status === "syncing" ? 0.6 : 1,
         }}>
-        {status === "syncing" ? "Uploading…" : status === "done" ? "Synced ✓" : status === "error" ? "Failed ✗" : "Upload now"}
+        {status === "syncing" ? syncing : status === "done" ? done : status === "error" ? error : label}
       </button>
-    </SettingRow>
+    );
+  }
+
+  return (
+    <>
+      <SettingRow label="Upload to Cloud" hint="Push all data from this device to Firestore (do this on your main device)">
+        {btn(upStatus, "Upload now", "Uploading…", "Uploaded ✓", "Failed ✗", uploadNow)}
+      </SettingRow>
+      <SettingRow label="Download from Cloud" hint="Pull data from Firestore into this device (do this on a new device after logging in)">
+        {btn(downStatus, "Download now", "Downloading…", "Done — reloading…", "Failed ✗", downloadNow)}
+      </SettingRow>
+    </>
   );
 }
 
