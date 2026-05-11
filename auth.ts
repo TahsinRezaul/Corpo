@@ -55,6 +55,11 @@ const providers = [
     ? [Google({
         clientId: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        authorization: {
+          params: {
+            scope: "openid email profile https://www.googleapis.com/auth/drive.appdata",
+          },
+        },
       })]
     : []),
 
@@ -88,8 +93,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       return true;
     },
+    async jwt({ token, account }) {
+      if (account?.provider === "google" && account.access_token) {
+        token.googleAccessToken = account.access_token;
+      }
+      return token;
+    },
     async session({ session, token }) {
       if (token.sub) session.user.id = token.sub;
+      if (typeof token.googleAccessToken === "string") {
+        session.googleAccessToken = token.googleAccessToken;
+      }
       return session;
     },
   },
