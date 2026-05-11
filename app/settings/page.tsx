@@ -296,12 +296,14 @@ function CloudSyncRow() {
   const { data: session } = useSession();
   const [upStatus, setUpStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
   const [downStatus, setDownStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string>("");
 
   const googleToken = session?.googleAccessToken;
   const storageLabel = googleToken ? "Google Drive" : "Firestore";
 
   async function uploadNow() {
     setUpStatus("syncing");
+    setErrorMsg("");
     try {
       const data: Record<string, unknown> = {};
       for (const key of SYNC_KEYS) {
@@ -320,14 +322,17 @@ function CloudSyncRow() {
         ok = res.ok;
       }
       setUpStatus(ok ? "done" : "error");
-    } catch {
+      if (!ok) setErrorMsg("Upload failed — see detail below");
+    } catch (e) {
       setUpStatus("error");
+      setErrorMsg(e instanceof Error ? e.message : String(e));
     }
-    setTimeout(() => setUpStatus("idle"), 3000);
+    setTimeout(() => setUpStatus("idle"), 5000);
   }
 
   async function downloadNow() {
     setDownStatus("syncing");
+    setErrorMsg("");
     try {
       let data: Record<string, unknown> | null = null;
       if (googleToken) {
@@ -338,7 +343,8 @@ function CloudSyncRow() {
       }
       if (!data) {
         setDownStatus("error");
-        setTimeout(() => setDownStatus("idle"), 3000);
+        setErrorMsg("No backup found in Google Drive yet — upload first from your main device.");
+        setTimeout(() => setDownStatus("idle"), 5000);
         return;
       }
       let wrote = 0;
@@ -347,13 +353,12 @@ function CloudSyncRow() {
           try { localStorage.setItem(key, JSON.stringify(data[key])); wrote++; } catch {}
         }
       }
-      console.log(`[Download] wrote ${wrote} keys to localStorage`);
       setDownStatus("done");
       setTimeout(() => window.location.reload(), 800);
     } catch (e) {
-      console.error("[Download] error", e);
       setDownStatus("error");
-      setTimeout(() => setDownStatus("idle"), 3000);
+      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setTimeout(() => setDownStatus("idle"), 5000);
     }
   }
 
@@ -391,6 +396,11 @@ function CloudSyncRow() {
       >
         {btn(downStatus, "Download now", "Downloading…", "Done — reloading…", "Failed ✗", downloadNow)}
       </SettingRow>
+      {errorMsg && (
+        <div className="px-4 py-2 rounded-lg text-xs mt-1" style={{ backgroundColor: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.25)", color: "#f87171" }}>
+          {errorMsg}
+        </div>
+      )}
     </>
   );
 }
