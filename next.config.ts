@@ -23,7 +23,7 @@ const SECURITY_HEADERS = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self'",
-      "connect-src 'self' https://maps.googleapis.com https://nominatim.openstreetmap.org",
+      "connect-src 'self' https://maps.googleapis.com https://www.googleapis.com https://nominatim.openstreetmap.org",
       "frame-ancestors 'none'",
     ].join("; "),
   },
