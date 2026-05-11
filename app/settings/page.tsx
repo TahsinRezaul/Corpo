@@ -298,7 +298,7 @@ function CloudSyncRow() {
   const [downStatus, setDownStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
 
   const googleToken = session?.googleAccessToken;
-  const storageLabel = googleToken ? "Google Drive" : "Cloud";
+  const storageLabel = googleToken ? "Google Drive" : "Firestore";
 
   async function uploadNow() {
     setUpStatus("syncing");
