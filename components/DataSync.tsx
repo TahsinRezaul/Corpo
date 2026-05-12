@@ -12,7 +12,7 @@ export default function DataSync() {
     const flag = `synced:${session.user.id}`;
     if (sessionStorage.getItem(flag)) return;
 
-    fetch("/api/userdata")
+    fetch("/api/drive")
       .then((r) => r.json())
       .then((data: Record<string, unknown>) => {
         for (const [key, value] of Object.entries(data)) {
@@ -21,7 +21,7 @@ export default function DataSync() {
           }
         }
         sessionStorage.setItem(flag, "1");
-        window.location.reload();
+        if (Object.keys(data).length > 0) window.location.reload();
       })
       .catch(() => {
         sessionStorage.setItem(flag, "1");

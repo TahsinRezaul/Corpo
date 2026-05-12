@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
 import { getSettings, saveSettings, type AppSettings, DEFAULT_SETTINGS, DEFAULT_LOCATION_BIAS, type LocationBias } from "@/lib/storage";
 import { requestBrowserPermission, getBrowserPermission } from "@/lib/notifications";
 import AddressInput, { resolvePlaceDetails, type PlaceResult } from "@/components/AddressInput";
 import PageHelp from "@/components/PageHelp";
 import { PAGE_HELP } from "@/lib/page-help-content";
-import { driveUpload, driveDownload } from "@/lib/drive-sync";
 
 type Tab = "general" | "invoices" | "receipts" | "mileage" | "tax" | "ai" | "notifications";
 
@@ -293,13 +291,9 @@ const SYNC_KEYS = [
 ];
 
 function CloudSyncRow() {
-  const { data: session } = useSession();
   const [upStatus, setUpStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
   const [downStatus, setDownStatus] = useState<"idle"|"syncing"|"done"|"error">("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
-
-  const googleToken = session?.googleAccessToken;
-  const storageLabel = googleToken ? "Google Drive" : "Firestore";
 
   async function uploadNow() {
     setUpStatus("syncing");
@@ -310,16 +304,13 @@ function CloudSyncRow() {
         const raw = localStorage.getItem(key);
         if (raw) { try { data[key] = JSON.parse(raw); } catch {} }
       }
-      if (googleToken) {
-        await driveUpload(googleToken, data);
-      } else {
-        const res = await fetch("/api/userdata/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-      }
+      const res = await fetch("/api/drive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok) throw new Error(json.error ?? `Error ${res.status}`);
       setUpStatus("done");
     } catch (e) {
       setUpStatus("error");
@@ -332,23 +323,18 @@ function CloudSyncRow() {
     setDownStatus("syncing");
     setErrorMsg("");
     try {
-      let data: Record<string, unknown> | null = null;
-      if (googleToken) {
-        data = await driveDownload(googleToken);
-      } else {
-        const res = await fetch("/api/userdata");
-        if (res.ok) data = await res.json() as Record<string, unknown>;
-      }
-      if (!data) {
+      const res = await fetch("/api/drive");
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? `Error ${res.status}`);
+      if (Object.keys(data).length === 0) {
         setDownStatus("error");
-        setErrorMsg("No backup found in Google Drive yet — upload first from your main device.");
+        setErrorMsg("No backup found — upload first from your main device.");
         setTimeout(() => setDownStatus("idle"), 5000);
         return;
       }
-      let wrote = 0;
       for (const key of SYNC_KEYS) {
         if (key in data && data[key] !== null && data[key] !== undefined) {
-          try { localStorage.setItem(key, JSON.stringify(data[key])); wrote++; } catch {}
+          try { localStorage.setItem(key, JSON.stringify(data[key])); } catch {}
         }
       }
       setDownStatus("done");
@@ -377,21 +363,10 @@ function CloudSyncRow() {
 
   return (
     <>
-      {!googleToken && session && (
-        <div className="py-3 px-4 rounded-lg text-xs" style={{ color: "var(--text-secondary)", backgroundColor: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)" }}>
-          Sign out and sign back in with Google to activate Drive sync.
-        </div>
-      )}
-      <SettingRow
-        label={`Upload to ${storageLabel}`}
-        hint={googleToken ? "Save all data from this device to your Google Drive (hidden app folder)" : "Push all data from this device to cloud storage"}
-      >
+      <SettingRow label="Upload to Google Drive" hint="Save all data from this device to your Google Drive (hidden app folder)">
         {btn(upStatus, "Upload now", "Uploading…", "Uploaded ✓", "Failed ✗", uploadNow)}
       </SettingRow>
-      <SettingRow
-        label={`Download from ${storageLabel}`}
-        hint={googleToken ? "Restore data from Google Drive onto this device" : "Pull data from cloud storage to this device"}
-      >
+      <SettingRow label="Download from Google Drive" hint="Restore data from Google Drive onto this device">
         {btn(downStatus, "Download now", "Downloading…", "Done — reloading…", "Failed ✗", downloadNow)}
       </SettingRow>
       {errorMsg && (
