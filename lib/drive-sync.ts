@@ -17,12 +17,11 @@ async function findFileId(accessToken: string): Promise<string | null> {
 export async function driveUpload(
   accessToken: string,
   data: Record<string, unknown>
-): Promise<boolean> {
+): Promise<void> {
   const content = JSON.stringify(data);
   const existingId = await findFileId(accessToken);
 
   if (existingId) {
-    // Update content only — simple media upload
     const res = await fetch(
       `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=media`,
       {
@@ -34,11 +33,10 @@ export async function driveUpload(
         body: content,
       }
     );
-    if (!res.ok) console.error("[Drive] update failed", res.status, await res.text());
-    return res.ok;
+    if (!res.ok) throw new Error(`Drive update failed ${res.status}: ${await res.text()}`);
+    return;
   }
 
-  // Create new file in appDataFolder
   const boundary = "corpo_boundary";
   const metadata = JSON.stringify({ name: FILE_NAME, parents: ["appDataFolder"] });
   const body =
@@ -61,8 +59,7 @@ export async function driveUpload(
       body,
     }
   );
-  if (!res.ok) console.error("[Drive] create failed", res.status, await res.text());
-  return res.ok;
+  if (!res.ok) throw new Error(`Drive create failed ${res.status}: ${await res.text()}`);
 }
 
 export async function driveDownload(

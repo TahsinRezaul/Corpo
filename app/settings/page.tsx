@@ -310,19 +310,17 @@ function CloudSyncRow() {
         const raw = localStorage.getItem(key);
         if (raw) { try { data[key] = JSON.parse(raw); } catch {} }
       }
-      let ok: boolean;
       if (googleToken) {
-        ok = await driveUpload(googleToken, data);
+        await driveUpload(googleToken, data);
       } else {
         const res = await fetch("/api/userdata/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
-        ok = res.ok;
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
       }
-      setUpStatus(ok ? "done" : "error");
-      if (!ok) setErrorMsg("Upload failed — see detail below");
+      setUpStatus("done");
     } catch (e) {
       setUpStatus("error");
       setErrorMsg(e instanceof Error ? e.message : String(e));
