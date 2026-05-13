@@ -106,10 +106,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
 
       // Token still valid
-      if (Date.now() < (token.googleAccessTokenExpiry ?? 0) - 60_000) return token;
+      const expiry = token.googleAccessTokenExpiry as number | undefined;
+      if (expiry && Date.now() < expiry - 60_000) return token;
 
       // Token expired — attempt refresh
-      if (!token.googleRefreshToken) return token;
+      const refreshToken = token.googleRefreshToken as string | undefined;
+      if (!refreshToken) return token;
       try {
         const res = await fetch("https://oauth2.googleapis.com/token", {
           method: "POST",
@@ -118,7 +120,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             client_id: process.env.GOOGLE_CLIENT_ID!,
             client_secret: process.env.GOOGLE_CLIENT_SECRET!,
             grant_type: "refresh_token",
-            refresh_token: token.googleRefreshToken,
+            refresh_token: refreshToken,
           }),
         });
         const refreshed = await res.json() as { access_token?: string; expires_in?: number };
