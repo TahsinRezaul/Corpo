@@ -58,6 +58,7 @@ const providers = [
         authorization: {
           params: {
             scope: "openid email profile https://www.googleapis.com/auth/drive.appdata",
+            access_type: "offline",
           },
         },
       })]
@@ -94,9 +95,37 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return true;
     },
     async jwt({ token, account }) {
+      // Initial sign-in — store access + refresh token and expiry
       if (account?.provider === "google" && account.access_token) {
         token.googleAccessToken = account.access_token;
+        if (account.refresh_token) token.googleRefreshToken = account.refresh_token;
+        token.googleAccessTokenExpiry = account.expires_at
+          ? account.expires_at * 1000
+          : Date.now() + 3600 * 1000;
+        return token;
       }
+
+      // Token still valid
+      if (Date.now() < (token.googleAccessTokenExpiry ?? 0) - 60_000) return token;
+
+      // Token expired — attempt refresh
+      if (!token.googleRefreshToken) return token;
+      try {
+        const res = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: process.env.GOOGLE_CLIENT_ID!,
+            client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+            grant_type: "refresh_token",
+            refresh_token: token.googleRefreshToken,
+          }),
+        });
+        const refreshed = await res.json() as { access_token?: string; expires_in?: number };
+        if (!res.ok || !refreshed.access_token) return token;
+        token.googleAccessToken = refreshed.access_token;
+        token.googleAccessTokenExpiry = Date.now() + (refreshed.expires_in ?? 3600) * 1000;
+      } catch { /* keep existing token if refresh fails */ }
       return token;
     },
     async session({ session, token }) {

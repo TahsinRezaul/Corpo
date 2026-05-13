@@ -6,13 +6,14 @@ import { useSession } from "next-auth/react";
 export default function DataSync() {
   const { data: session, status } = useSession();
 
+  // On first login per browser session: pull latest data from Firestore into localStorage.
   useEffect(() => {
     if (status !== "authenticated" || !session?.user?.id) return;
 
     const flag = `synced:${session.user.id}`;
     if (sessionStorage.getItem(flag)) return;
 
-    fetch("/api/drive")
+    fetch("/api/userdata")
       .then((r) => r.json())
       .then((data: Record<string, unknown>) => {
         for (const [key, value] of Object.entries(data)) {

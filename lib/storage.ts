@@ -229,7 +229,7 @@ function readJSON<T>(key: string, fallback: T): T {
   catch { return fallback; }
 }
 
-// Fire-and-forget: mirror a localStorage write to the server so data persists per user account.
+// Fire-and-forget: mirror every localStorage write to Firestore so data persists per account.
 function syncKey(key: string, value: unknown): void {
   fetch("/api/userdata", {
     method: "POST",
