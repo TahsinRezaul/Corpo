@@ -299,18 +299,19 @@ function CloudSyncRow() {
     setUpStatus("syncing");
     setErrorMsg("");
     try {
-      const data: Record<string, unknown> = {};
       for (const key of SYNC_KEYS) {
         const raw = localStorage.getItem(key);
-        if (raw) { try { data[key] = JSON.parse(raw); } catch {} }
+        if (!raw) continue;
+        try {
+          const value = JSON.parse(raw);
+          const res = await fetch("/api/userdata", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, value }),
+          });
+          if (!res.ok) throw new Error(`Error ${res.status}`);
+        } catch { /* skip individual key errors */ }
       }
-      const res = await fetch("/api/drive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const json = await res.json() as { ok?: boolean; error?: string };
-      if (!res.ok) throw new Error(json.error ?? `Error ${res.status}`);
       setUpStatus("done");
     } catch (e) {
       setUpStatus("error");
@@ -323,12 +324,12 @@ function CloudSyncRow() {
     setDownStatus("syncing");
     setErrorMsg("");
     try {
-      const res = await fetch("/api/drive");
+      const res = await fetch("/api/userdata");
       const data = await res.json() as Record<string, unknown>;
-      if (!res.ok) throw new Error((data as { error?: string }).error ?? `Error ${res.status}`);
+      if (!res.ok) throw new Error(`Error ${res.status}`);
       if (Object.keys(data).length === 0) {
         setDownStatus("error");
-        setErrorMsg("No backup found — upload first from your main device.");
+        setErrorMsg("No data found — upload first from your main device.");
         setTimeout(() => setDownStatus("idle"), 5000);
         return;
       }
@@ -363,10 +364,10 @@ function CloudSyncRow() {
 
   return (
     <>
-      <SettingRow label="Upload to Google Drive" hint="Save all data from this device to your Google Drive (hidden app folder)">
-        {btn(upStatus, "Upload now", "Uploading…", "Uploaded ✓", "Failed ✗", uploadNow)}
+      <SettingRow label="Force sync to cloud" hint="Push all data from this device to the cloud now (happens automatically on every change)">
+        {btn(upStatus, "Sync now", "Syncing…", "Synced ✓", "Failed ✗", uploadNow)}
       </SettingRow>
-      <SettingRow label="Download from Google Drive" hint="Restore data from Google Drive onto this device">
+      <SettingRow label="Pull from cloud" hint="Load the latest cloud data onto this device">
         {btn(downStatus, "Download now", "Downloading…", "Done — reloading…", "Failed ✗", downloadNow)}
       </SettingRow>
       {errorMsg && (
